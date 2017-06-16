@@ -1,0 +1,50 @@
+[ ] Add an interactive, runtime user interface:
+
+The emulator would be much more intuitive if it had a runtime user interface
+system that would allow the user to change settings on the fly.
+
+The configuration system already has the neccessary code to allow the user to
+modify the configuration file (using the `update_line' field of a ConfigEntry,
+and the `write_config_file' method of the ConfigSystem).  Perhaps an entry
+lookup routine will be neccessary, but that should be trivial to write.
+
+The key to achieving this goal will be rustyline:
+
+    https://kkawakam.github.io/rustyline/rustyline/
+
+Rustyline is a readline implementation.  It will allow us to have a command
+prompt with the emulator, and it'll make sure that messages logged to the
+screen won't break the prompt.  It will also provide us with history and
+autocompletions, if these features will turn out to be desirable.
+
+The addition of the user interface will also require us to add threading
+into the emulator.  The emulator's main loop will run in its own thread,
+while the user interface will run in its own.  There will be a communication
+channel that the emulation thread will check on each emulation loop iteration,
+and handle any requests the user gave it, while the user interface will issue
+these requests.
+
+Some of the interesting features this will allow is better cassette support,
+the ability to load text files into the emulator via the keyboard system,
+and of course the ability to change settings without having to modify the
+configuration file by hand.
+
+
+[ ] Add sound support:
+
+Currently, the emulator doesn't have sound suppport.
+
+Sound on the TRS-80 Model I is created using the cassette interface.  Because
+our cassette code is adapted from xtrs, it shouldn't be too hard to adapt the
+sound support as well.
+
+SDL has an audio interface which could be used for sound output, or another
+option would perhaps be the portaudio library.
+
+
+[ ] Improve cassette handling:
+
+Once the interactive user interface is implemented, it would be nice to change
+our cassette handling model to having a single cassette file, which we could
+rewind and seek to different locations to allow storing more than just a single
+record on a single tape - like you can do in real life.

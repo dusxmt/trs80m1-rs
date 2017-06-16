@@ -1,0 +1,6 @@
+I'd like to thank Timothy Mann for maintaing the xtrs emulator, the codebase
+of which helped me better understand certain aspects of the machine, and from
+which I copied and adapted the cassette interface and the character generator
+fonts.
+
+You can find the emulator here: http://www.tim-mann.org/xtrs.html

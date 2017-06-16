@@ -1,0 +1,70 @@
+Welcome, this is trs80m1-rs, an emulator of the Tandy TRS-80 Model I written
+in Rust.
+
+The program emulates a base unit with RAM expandable up to 48K, and a cassette
+tape interface.
+
+
+This emulator was mostly made as an exercise to help me with writing Rust code.
+The project originally started as an emulator of the Z80 processor, which I
+then decided to use to implement a machine, and I decided to go with the
+TRS-80 Model I, because of its simplicity.
+
+The emulator is not yet fully finished, it lacks many important features like
+sound, the expansion unit, the ability to change cassettes on-the-fly, but it
+is good enough to write programs in BASIC, to be able to save them, and to be
+able to play some classic games.  If you want a fully-featured emulator though,
+you're going to have to look somehwere else.
+
+
+The cassette code is heavily based on that found in Tim Mann's xtrs emulator,
+http://www.tim-mann.org/xtrs.html
+
+It does however currently deviate from that emulator's cassette handling,
+instead of having a single cassette file which you can rewind and seek to
+different points in the file, you have two separate files, one from which
+cassette data is read (input cassette), and one into which cassette data
+is written (output cassette).
+
+This choice was made since there currently isn't a way to change and seek
+cassettes on-the-fly, and so you can load from one cassette (always starts
+loading from the start - auto-rewind) and save onto another (deletes any
+previously existing data from the output cassette).
+
+
+The charactor generator fonts also originate from the xtrs emulator.
+
+
+There are plans to have interactive controls for the emulator, but for the
+time being, the current method of configuration is the configuration file,
+located at %APPDATA%\DusXMT\trs80m1-rs\config.ini on Microsoft Windows, and
+in ~/.trs80m1-rs/config.ini on UNIX-like systems.
+
+
+You're going to need a system ROM image in order to use the emulator.
+Because of their questionable legal status, I can not distribute these images,
+so you're going to have to find them on different parts of the internet.
+
+
+The keyboard emulation works by mapping real keys (based on their location on
+the keyboard) onto virtual keys.
+
+Some of the specifics of the keyboard mechanism:
+
+    - The break key is provided by F1 and Insert.
+
+    - The clear key is provided by F2 and Delete.
+
+    - The F5 key closes the emulator.
+
+    - The F11 key toggles the fullscreen mode.
+
+    - The '@' key is provided by the key that is '[' on qwerty en_US.
+
+    - The left shift and right shift keys are indistinguishable to the emulated
+      machine - they cross the same wires.
+
+    - The number row and numberpad keys are indistinguishable to the emulated
+      machine - they cross the same wires.  This also applies to the numpad
+      and main enter key, and the numpad and main period key.
+
