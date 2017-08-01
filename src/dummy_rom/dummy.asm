@@ -1,10 +1,16 @@
-; A dummy rom file that the emulator uses when no system rom image is
-; provided by the user.  It displays some static text on the screen.
+; To the extent possible under law, Marek Benc has waived all copyright and
+; related or neighboring rights to all parts of this dummy system rom.
+;
+; Full text: http://creativecommons.org/publicdomain/zero/1.0/legalcode
+;
+;
+; This is a dummy rom file that the emulator uses when no system rom image
+; is provided by the user.  It displays some static text on the screen.
 ;
 ;
 ; You can use zasm to build this image:
 ;
-;     https://k1.spdns.de/Develop/Projects/zasm-4.0/Distributions/
+;     http://k1.spdns.de/Develop/Projects/zasm/Distributions/
 ;
 ;
 
