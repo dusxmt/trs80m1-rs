@@ -17,6 +17,12 @@ able to play some classic games.  If you want a fully-featured emulator though,
 you're going to have to look somehwere else.
 
 
+If you would like to develop machine language programs for this base model
+machine, you can do so for Level II in a modern environment with a Z80
+assembler and my machine language "tape linker", which you can find here:
+https://github.com/dusxmt/trs80m1-mltl
+
+
 The cassette code is heavily based on that found in Tim Mann's xtrs emulator,
 http://www.tim-mann.org/xtrs.html
 
