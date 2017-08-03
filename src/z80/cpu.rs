@@ -13,7 +13,6 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
-//use std::process;
 
 use memory;
 use memory::MemIO;
@@ -152,6 +151,7 @@ impl CPU {
     pub fn exec(&mut self, cycles_to_exec: u32, memory_system: &mut memory::MemorySystem) {
         let cycles_to_exec_comp: i32 = (cycles_to_exec as i32) - (self.cycle_overshoot as i32);
         let mut executed_cycles: i32 = 0;
+        let halted_before = self.halted;
 
         while executed_cycles < cycles_to_exec_comp {
             if self.halted {
@@ -174,11 +174,8 @@ impl CPU {
         //println!("[{:10}]: {:10} CPU cycles requested, executed {:10}.", self.cycle_timestamp, cycles_to_exec, executed_cycles);
 
 
-        // Is the CPU halted? If so, for now, halt the emulator.
-        if self.halted {
-            //println!("{:?}", memory_system.ram_chip);
-            //println!("The CPU is halted, and interrupts are not yet implemented, ending it here.");
-            //process::exit(0);
+        // Inform the user tha the CPU is halted.
+        if !halted_before && self.halted {
             println!("Warning: The CPU is halted, and interrupts are not yet implemented. The emulator is stuck with no way of recovery.");
         }
     }
