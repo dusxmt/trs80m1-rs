@@ -167,11 +167,9 @@ impl Emulator {
                     },
                     false => {
                         window.set_fullscreen(sdl2::video::FullscreenType::Off).unwrap();
-                        if !self.desktop_fullscreen {
-                            let (width, height) = config_items.video_windowed_resolution;
-                            window.set_size(width, height).unwrap();
-                            window.set_position(sdl2::video::WindowPos::Centered, sdl2::video::WindowPos::Centered);
-                        }
+                        let (width, height) = config_items.video_windowed_resolution;
+                        window.set_size(width, height).unwrap();
+                        window.set_position(sdl2::video::WindowPos::Centered, sdl2::video::WindowPos::Centered);
                     }
                 }
                 self.fullscreen = self.input_system.fullscreen_request;
