@@ -100,6 +100,7 @@ impl Emulator {
         let mut frame_begin:     std_time::Duration;
         let mut frame_end:       std_time::Duration;
         let mut last_frame_ns:   u32;
+        let mut residual_ns:     u32;
         let mut frame_cycles:    u32;
 
         // Initialize SDL:
@@ -149,6 +150,7 @@ impl Emulator {
             // Execute as many machine cycles as we should've executed on the
             // last frame.
             frame_cycles = last_frame_ns / NS_PER_CPU_CYCLE;
+            residual_ns  = last_frame_ns % NS_PER_CPU_CYCLE;
             self.input_system.handle_events(&mut self.running, &mut event_pump);
             self.emulate_cycles(frame_cycles, memory_system);
 
@@ -198,6 +200,10 @@ impl Emulator {
                 // that it didn't :3
                 last_frame_ns = 1_000_000_000;
             }
+
+            // Take care of the remaining time from the frame before this one
+            // that was too short to execute any cycles:
+            last_frame_ns += residual_ns;
 
             // Our end is someone else's beginning.
             frame_begin = frame_end;
