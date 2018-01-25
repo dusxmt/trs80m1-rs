@@ -1,4 +1,4 @@
-// Copyright (c) 2017 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -23,6 +23,8 @@ use std::num;
 use std::io::prelude::*;
 
 use cassette; // For cassette::Format.
+use util;     // for util::StartupLogger.
+use util::MessageLogging;
 
 // Names for determining where to find the configuration folder and files:
 const WINDOWS_DEV_NAME:      &'static str = "DusXMT";
@@ -266,25 +268,30 @@ pub struct ConfigSystem {
     conf_file_lines:      Vec<String>,
 
     config_sections:      Box<[ConfigSection]>,
+
+    logged_messages:      Vec<String>,
+    messages_present:     bool,
 }
 
 impl ConfigSystem {
-    pub fn new<P: AsRef<path::Path>>(config_dir_in: P) -> Option<ConfigSystem> {
+    pub fn new<P: AsRef<path::Path>>(config_dir_in: P, startup_logger: &mut util::StartupLogger) -> Option<ConfigSystem> {
         let config_dir = config_dir_in.as_ref() as &path::Path;
 
-        if check_config_dir(config_dir) {
+        if check_config_dir(config_dir, startup_logger) {
             let mut config_file_path = config_dir.to_owned();
             config_file_path.push(CONFIG_FILE_NAME);
             let config_file_path = config_file_path;
 
-            print!("Loading `{}'... ", config_file_path.display());
-            let conf_file_lines = match load_config_file(&config_file_path) {
+            startup_logger.log_incomplete_message(format!("Loading `{}'... ", config_file_path.display()));
+            let conf_file_lines = match load_config_file(&config_file_path, startup_logger) {
                 Ok(lines) => {
-                    println!("ok.");
+                    startup_logger.log_message("ok.".to_owned());
+
                     lines
                 },
                 Err(error) => {
-                    println!("failed to load the config file: {}.", error);
+                    startup_logger.log_message(format!("failed to load the config file: {}.", error));
+
                     return None;
                 },
             };
@@ -296,34 +303,40 @@ impl ConfigSystem {
                 conf_file_lines:  conf_file_lines,
 
                 config_sections:  new_config_sections(),
+
+                logged_messages:  Vec::new(),
+                messages_present: false,
             };
-            print!("Parsing configuration... ");
+
+            startup_logger.log_incomplete_message("Parsing configuration... ".to_owned());
             match new_system.sanity_check() {
                 Ok(()) => {
                     match new_system.reload_all_sections() {
                         Ok(()) => {
-                            println!("ok.");
+                            startup_logger.log_message("ok.".to_owned());
 
-                            print!("Updating the configuration file... ");
+                            startup_logger.log_incomplete_message("Updating the configuration file... ".to_owned());
                             match new_system.write_config_file() {
                                 Ok(()) => {
-                                    println!("ok.");
+                                    startup_logger.log_message("ok.".to_owned());
                                 },
                                 Err(error) => {
-                                    println!("failed, {}.", error);
+                                    startup_logger.log_message(format!("failed, {}.", error));
                                 },
                             }
 
                             Some(new_system)
                         },
                         Err(error) => {
-                            println!("failed, {}.", error);
+                            startup_logger.log_message(format!("failed, {}.", error));
+
                             None
                         },
                     }
                 },
                 Err(error) => {
-                    println!("failed, {}.", error);
+                    startup_logger.log_message(format!("failed, {}.", error));
+
                     None
                 },
             }
@@ -450,7 +463,7 @@ impl ConfigSystem {
                             dest_line_iter += 1;
                         }
                         end_index = dest_line_iter - 1;
-                        try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)).expect(format!("unable to find the freshly added `{}' entry in the `[{}]' section.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name).as_str())
+                        try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)).expect(format!(".expect() call: Unable to find the freshly added `{}' entry in the `[{}]' section", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name).as_str())
                     },
                 };
                 try!((self.config_sections[section_iter].entries[entry_iter].parse_entry)(entry_loc, &self.conf_file_lines[entry_loc], &mut self.config_items));
@@ -549,6 +562,22 @@ impl ConfigSystem {
     }
 }
 
+impl MessageLogging for ConfigSystem {
+    fn log_message(&mut self, message: String) {
+        self.logged_messages.push(message);
+        self.messages_present = true;
+    }
+    fn messages_available(&self) -> bool {
+        self.messages_present
+    }
+    fn collect_messages(&mut self) -> Vec<String> {
+        let logged_thus_far = self.logged_messages.drain(..).collect();
+        self.messages_present = false;
+
+        logged_thus_far
+    }
+}
+
 // Find the %AppData% folder on Windows:
 fn find_appdata() -> Option<path::PathBuf> {
     let mut search_result = None;
@@ -580,13 +609,13 @@ fn find_appdata() -> Option<path::PathBuf> {
 pub fn get_default_config_dir_path() -> path::PathBuf {
 
     if cfg!(target_os = "windows") {
-        let mut config_dir_path = find_appdata().expect("failed to find the %AppData% directory.");
+        let mut config_dir_path = find_appdata().expect(".expect() call: Failed to find the %AppData% directory");
         config_dir_path.push(WINDOWS_DEV_NAME);
         config_dir_path.push(WINDOWS_PROJ_NAME);
 
         config_dir_path
     } else {
-        let mut config_dir_path = env::home_dir().expect("failed to find the home directory.");
+        let mut config_dir_path = env::home_dir().expect(".expect() call: Failed to find the home directory");
         config_dir_path.push(UNIX_HIDDEN_DIR_NAME);
 
         config_dir_path
@@ -594,30 +623,30 @@ pub fn get_default_config_dir_path() -> path::PathBuf {
 }
 
 // Check whether the configuration directory exists, and if not, create it:
-fn check_config_dir<P: AsRef<path::Path>>(config_dir_in: P) -> bool {
+fn check_config_dir<P: AsRef<path::Path>>(config_dir_in: P, startup_logger: &mut util::StartupLogger) -> bool {
 
     let config_dir = config_dir_in.as_ref() as &path::Path;
-    print!("Checking `{}'... ", config_dir.display());
+    startup_logger.log_incomplete_message(format!("Checking `{}'... ", config_dir.display()));
 
     if !config_dir.exists() {
-        print!("doesn't exist, creating... ");
+        startup_logger.log_incomplete_message("doesn't exist, creating... ".to_owned());
         match fs::create_dir_all(&config_dir) {
             Ok(()) => {
-                println!("ok.");
+                startup_logger.log_message("ok.".to_owned());
 
                 true
             },
             Err(error) => {
-                println!("failed: {}.", error);
+                startup_logger.log_message(format!("failed: {}.", error));
 
                 false
             },
         }
     } else if config_dir.exists() && !config_dir.is_dir() {
-        println!("already exists, but is not a directory. Please remove it and try again.");
+        startup_logger.log_message("already exists, but is not a directory. Please remove it and try again.".to_owned());
         false
     } else if config_dir.exists() && config_dir.is_dir() {
-        println!("ok.");
+        startup_logger.log_message("ok.".to_owned());
         true
     } else {
         false
@@ -625,8 +654,7 @@ fn check_config_dir<P: AsRef<path::Path>>(config_dir_in: P) -> bool {
 }
 
 // Load the config file into a vector of strings representing lines:
-fn load_config_file<P: AsRef<path::Path>>
-                   (config_file_path_in: P)
+fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger: &mut util::StartupLogger)
                    -> Result<Vec<String>, io::Error> {
 
     let config_file_path = config_file_path_in.as_ref() as &path::Path;
@@ -661,7 +689,7 @@ fn load_config_file<P: AsRef<path::Path>>
         Ok(line_collection)
     } else {
         // Nothing to load:
-        print!("doesn't exist, creating... ");
+        startup_logger.log_incomplete_message("doesn't exist, creating... ".to_owned());
         try!(fs::File::create(config_file_path));
         Ok(Vec::new())
     }
@@ -1042,7 +1070,6 @@ fn parse_entry_general_ram_size(line_number: usize, entry_string: &str, config_i
                 },
             }
         } else {
-                        println!("point 2");
             return Err(ConfigError::InvalidRamSpecifier(line_number, entry_string.to_owned()));
         }
     }

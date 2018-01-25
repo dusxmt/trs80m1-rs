@@ -1,4 +1,4 @@
-// Copyright (c) 2017 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -16,6 +16,7 @@
 use fonts;
 use memory;
 use sdl2;
+use util::MessageLogging;
 
 pub const VID_MEM_SIZE:    u16 = 0x0400;
 
@@ -34,17 +35,20 @@ pub struct VideoMemory {
     needs_update:  bool,
     pub modesel:   bool, // true => 32-columns; false => 64-columns.
     lowercase_mod: bool,
+
+    logged_messages:  Vec<String>,
+    messages_present: bool,
 }
 
 impl memory::MemIO for VideoMemory {
-    fn read_byte(&self, addr: u16) -> u8 {
+    fn read_byte(&mut self, addr: u16, _cycle_timestamp: u32) -> u8 {
         if addr < VID_MEM_SIZE {
             self.memory[addr as usize]
         } else {
-            panic!("Failed read: Address 0x{:04X} is invalid for the video RAM.");
+            panic!("Failed read: Address 0x{:04X} is invalid for the video RAM", addr);
         }
     }
-    fn write_byte(&mut self, addr: u16, val: u8) {
+    fn write_byte(&mut self, addr: u16, val: u8, _cycle_timestamp: u32) {
         if addr < VID_MEM_SIZE {
             let mut to_set = val;
 
@@ -62,39 +66,61 @@ impl memory::MemIO for VideoMemory {
                 self.needs_update = true;
             }
         } else {
-            panic!("Failed write: Address 0x{:04X} is invalid for the video RAM.", addr);
+            panic!("Failed write: Address 0x{:04X} is invalid for the video RAM", addr);
         }
     }
 }
 
 impl VideoMemory {
-    pub fn new(lowercase_mod: bool) -> VideoMemory {
-        VideoMemory {
-            memory:        [0; VID_MEM_SIZE as usize],
-            modesel:       false,
-            needs_update:  true, // Since we haven't drawn anything before yet.
-            lowercase_mod: lowercase_mod,
+    pub fn new(lowercase_mod: bool, start_addr: u16) -> VideoMemory {
+        let mut video_memory = VideoMemory {
+                                   memory:            [0; VID_MEM_SIZE as usize],
+                                   modesel:           false,
+                                   needs_update:      true, // Since we haven't drawn anything before yet.
+                                   lowercase_mod:     lowercase_mod,
+
+                                   logged_messages:   Vec::new(),
+                                   messages_present:  false,
+                               };
+        video_memory.log_message(format!("Created the video memory, starting address: 0x{:04X}, spanning {} bytes.", start_addr, VID_MEM_SIZE));
+        video_memory
+    }
+    pub fn power_off(&mut self) {
+
+        let size = self.memory.len();
+        let mut index = 0;
+
+        while index < size {
+            self.memory[index] = 0;
+            index += 1;
         }
+
+        self.log_message("The video ram was cleared.".to_owned());
     }
 }
 
 pub struct VideoSystem {
-    bg_color:      u8,  // Of the `RGB332` format.
-    fg_color:      u8,  // Of the `RGB332` format.
-    font:          [u8; fonts::FONT_SIZE],
+    bg_color:          u8,  // Of the `RGB332` format.
+    fg_color:          u8,  // Of the `RGB332` format.
+    font:              [u8; fonts::FONT_SIZE],
+
+    logged_messages:   Vec<String>,
+    messages_present:  bool,
 }
 
 impl VideoSystem {
     pub fn new(bg_color: u8, fg_color: u8, font: fonts::FontSelector)
         -> VideoSystem {
         VideoSystem {
-            bg_color:      bg_color,
-            fg_color:      fg_color,
-            font:          match font {
-                fonts::FontSelector::CG0 => fonts::FONT_CG0,
-                fonts::FontSelector::CG1 => fonts::FONT_CG1,
-                fonts::FontSelector::CG2 => fonts::FONT_CG2,
-            },
+            bg_color:          bg_color,
+            fg_color:          fg_color,
+            font:              match font {
+                                   fonts::FontSelector::CG0 => fonts::FONT_CG0,
+                                   fonts::FontSelector::CG1 => fonts::FONT_CG1,
+                                   fonts::FontSelector::CG2 => fonts::FONT_CG2,
+                               },
+            logged_messages:   Vec::new(),
+            messages_present:  false,
         }
     }
     // Generate textures for the screen tiles.
@@ -197,5 +223,37 @@ impl VideoSystem {
             }
         }
         renderer.present();
+    }
+}
+
+impl MessageLogging for VideoMemory {
+    fn log_message(&mut self, message: String) {
+        self.logged_messages.push(message);
+        self.messages_present = true;
+    }
+    fn messages_available(&self) -> bool {
+        self.messages_present
+    }
+    fn collect_messages(&mut self) -> Vec<String> {
+        let logged_thus_far = self.logged_messages.drain(..).collect();
+        self.messages_present = false;
+
+        logged_thus_far
+    }
+}
+
+impl MessageLogging for VideoSystem {
+    fn log_message(&mut self, message: String) {
+        self.logged_messages.push(message);
+        self.messages_present = true;
+    }
+    fn messages_available(&self) -> bool {
+        self.messages_present
+    }
+    fn collect_messages(&mut self) -> Vec<String> {
+        let logged_thus_far = self.logged_messages.drain(..).collect();
+        self.messages_present = false;
+
+        logged_thus_far
     }
 }

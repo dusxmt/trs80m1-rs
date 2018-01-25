@@ -1,4 +1,4 @@
-// Copyright (c) 2017 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 use memory;
 use sdl2;
+use util::MessageLogging;
 
 // Even though the keyboard only has (at most) 64 keys, because of the way they
 // are wired up, it takes up 256 bytes of the address space.
@@ -25,10 +26,13 @@ pub const KBD_MEM_SIZE: u16 = 0x0100;
 
 pub struct KeyboardMemory {
     key_matrix: [u8; 8],
+
+    logged_messages:  Vec<String>,
+    messages_present: bool,
 }
 
 impl memory::MemIO for KeyboardMemory {
-    fn read_byte(&self, addr: u16) -> u8 {
+    fn read_byte(&mut self, addr: u16, _cycle_timestamp: u32) -> u8 {
         if addr < KBD_MEM_SIZE {
             // The lower byte specifies which row of the matrix is selected.
             let specifier: u8 = (addr & 0x00FF) as u8;
@@ -42,24 +46,31 @@ impl memory::MemIO for KeyboardMemory {
                | if (specifier & 0x40) != 0 { self.key_matrix[6] } else { 0 }
                | if (specifier & 0x80) != 0 { self.key_matrix[7] } else { 0 })
         } else {
-            panic!("Failed read: Address 0x{:04X} is invalid for the keyboard.");
+            panic!("Failed read: Address 0x{:04X} is invalid for the keyboard", addr);
         }
     }
-    fn write_byte(&mut self, addr: u16, val: u8) {
+    fn write_byte(&mut self, addr: u16, val: u8, _cycle_timestamp: u32) {
         if addr < KBD_MEM_SIZE {
-            println!("Warning: Attempted to write 0x{:02X} to address 0x{:04X} of the keyboard, this is a no-op.", val, addr);
+            self.log_message(format!("Warning: Attempted to write 0x{:02X} to address 0x{:04X} of the keyboard, this is a no-op.", val, addr));
         } else {
-            panic!("Failed write: Address 0x{:04X} is invalid for the keyboard.", addr);
+            panic!("Failed write: Address 0x{:04X} is invalid for the keyboard", addr);
         }
     }
 }
 impl KeyboardMemory {
-    pub fn new() -> KeyboardMemory {
-        KeyboardMemory {
+    pub fn new(start_addr: u16) -> KeyboardMemory {
+        let mut memory = KeyboardMemory {
             key_matrix: [0; 8],
-        }
+
+            logged_messages: Vec::new(),
+            messages_present: false,
+        };
+
+        memory.log_message(format!("Created the keyboard, starting address: 0x{:04X}, spanning {} bytes.", start_addr, KBD_MEM_SIZE));
+        memory
     }
 }
+
 
 // The representation of the keyboard actions that get applied to the data bus.
 enum KeyboardQueueEntryAction {
@@ -443,13 +454,18 @@ fn new_redundant_key_map() -> HashMap<i32, RedundantKeyDesc> {
 }
 
 pub struct InputSystem {
-    queue:                VecDeque<KeyboardQueueEntry>,
+    queue:                   VecDeque<KeyboardQueueEntry>,
 
-    key_map:           HashMap<i32, KeyDesc>,
-    redundant_key_map: HashMap<i32, RedundantKeyDesc>,
-    redundant_key_ctl: [RedundantKeyControl; 16],
+    key_map:                 HashMap<i32, KeyDesc>,
+    redundant_key_map:       HashMap<i32, RedundantKeyDesc>,
+    redundant_key_ctl:       [RedundantKeyControl; 16],
 
-    pub fullscreen_request: bool,
+    pub reset_request:       bool,
+    pub pause_request:       bool,
+    pub fullscreen_request:  bool,
+
+    logged_messages:         Vec<String>,
+    messages_present:        bool,
 }
 
 // Try to add a keyboard change onto the queue. Ignore failures.
@@ -475,12 +491,17 @@ impl InputSystem {
                                       right_key_pressed: false,
                                   }; 16],
 
+            reset_request:        false,
+            pause_request:        false,
             fullscreen_request:   false,
+
+            logged_messages:      Vec::new(),
+            messages_present:     false,
         }
     }
 
     // Handle SDL events.
-    pub fn handle_events(&mut self, running: &mut bool,
+    pub fn handle_events(&mut self, exit_request: &mut bool,
                          event_pump: &mut sdl2::EventPump) {
 
         for event in event_pump.poll_iter() {
@@ -496,10 +517,16 @@ impl InputSystem {
 
                                 match scancode {
 
-                                    // F5 turns the emulator off
-                                    sdl2::keyboard::Scancode::F5 => {
-                                        *running = false;
+                                    // F4 (un)pauses the emulated machine
+                                    sdl2::keyboard::Scancode::F4 => {
+                                        self.pause_request = true;
                                     },
+
+                                    // F5 reboots the emulated machine
+                                    sdl2::keyboard::Scancode::F5 => {
+                                        self.reset_request = true;
+                                    },
+
 
                                     // F11 toggles the full-screen mode
                                     sdl2::keyboard::Scancode::F11 => {
@@ -626,7 +653,7 @@ impl InputSystem {
                     }
                 },
                 sdl2::event::Event::Quit {..} => {
-                    *running = false;
+                    *exit_request = true;
                 },
                 // Ignore any unrecognized events.
                 _ => { },
@@ -652,3 +679,36 @@ impl InputSystem {
         }
     }
 }
+
+impl MessageLogging for KeyboardMemory {
+    fn log_message(&mut self, message: String) {
+        self.logged_messages.push(message);
+        self.messages_present = true;
+    }
+    fn messages_available(&self) -> bool {
+        self.messages_present
+    }
+    fn collect_messages(&mut self) -> Vec<String> {
+        let logged_thus_far = self.logged_messages.drain(..).collect();
+        self.messages_present = false;
+
+        logged_thus_far
+    }
+}
+
+impl MessageLogging for InputSystem {
+    fn log_message(&mut self, message: String) {
+        self.logged_messages.push(message);
+        self.messages_present = true;
+    }
+    fn messages_available(&self) -> bool {
+        self.messages_present
+    }
+    fn collect_messages(&mut self) -> Vec<String> {
+        let logged_thus_far = self.logged_messages.drain(..).collect();
+        self.messages_present = false;
+
+        logged_thus_far
+    }
+}
+

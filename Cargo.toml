@@ -7,3 +7,7 @@ authors = ["Marek Benc <dusxmt@gmx.com>"]
 sdl2 = "0.28.0"
 time = "0.1.35"
 getopts = "0.2"
+
+[dependencies.pancurses]
+version = "0.14"
+features = ["win32"]

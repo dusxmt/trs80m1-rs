@@ -1,4 +1,4 @@
-// Copyright (c) 2017 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -13,21 +13,25 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
-extern crate time;
-extern crate sdl2;
 extern crate getopts;
+extern crate pancurses;
+extern crate sdl2;
+extern crate time;
 
 use std::env;
 use std::path;
+use std::process;
 
-mod proj_config;
-mod memory;
-mod z80;
-mod keyboard;
-mod video;
-mod fonts;
 mod cassette;
 mod emulator;
+mod fonts;
+mod keyboard;
+mod memory;
+mod proj_config;
+mod user_interface;
+mod util;
+mod video;
+mod z80;
 
 fn print_usage(progname: &str, opts: getopts::Options) {
     let brief = format!("Usage: {} [options]", progname);
@@ -50,6 +54,8 @@ fn get_progname(arg0: &path::Path) -> String {
 }
 
 fn main() {
+    user_interface::UserInterface::attach_panic_handler();
+
     let args: Vec<String> = env::args().collect();
     let progname = get_progname(args[0].as_ref());
 
@@ -63,13 +69,14 @@ fn main() {
     let matches = match options.parse(&args[1..]) {
         Ok(matches) => { matches },
         Err(error) => {
-            println!("{}: Argument parsing error: {}", progname, error);
-            return;
+            eprintln!("{}: Argument parsing error: {}", progname, error);
+            user_interface::UserInterface::enter_key_to_close_on_windows();
+            process::exit(1);
         },
     };
     if matches.opt_present("h") {
         print_usage(&progname, options);
-        return;
+        process::exit(0);
     }
     let config_dir = match matches.opt_str("c") {
         Some(dir_path) => {
@@ -87,15 +94,19 @@ fn main() {
        (rom1_selected && rom3_selected) ||
        (rom2_selected && rom3_selected) {
 
-        println!("You've specified multiple ROMs to use. Please choose only one.");
-        return;
+        eprintln!("You've specified multiple ROMs to use. Please choose only one.");
+        user_interface::UserInterface::enter_key_to_close_on_windows();
+        process::exit(1);
     }
 
-    let config_system = match proj_config::ConfigSystem::new(&config_dir) {
+    let mut startup_logger = util::StartupLogger::new();
+
+    let config_system = match proj_config::ConfigSystem::new(&config_dir, &mut startup_logger) {
         Some(system) => { system },
         None => {
-            println!("Failed to initialize the emulator.");
-            return;
+            eprintln!("Failed to initialize the emulator.");
+            user_interface::UserInterface::enter_key_to_close_on_windows();
+            process::exit(1);
         }
     };
     let selected_rom;
@@ -110,12 +121,19 @@ fn main() {
         selected_rom = config_system.config_items.general_default_rom;
     }
 
-//  println!("config_system.config_items: {:?}", config_system.config_items);
-
-    let mut memory_system = match memory::MemorySystem::new(&config_system, selected_rom) {
+    let mut memory_system = match memory::MemorySystem::new(&config_system, &mut startup_logger, selected_rom) {
         Some(system) => { system },
-        None => { return },
+        None => {
+            eprintln!("Failed to initialize the emulator's memory system.");
+            user_interface::UserInterface::enter_key_to_close_on_windows();
+            process::exit(1);
+        },
     };
-    let mut emulator = emulator::Emulator::new(&config_system.config_items);
-    emulator.run(&mut memory_system, &config_system.config_items);
+    let mut emulator = emulator::Emulator::new(&config_system.config_items, &mut startup_logger);
+    let ask_for_enter = emulator.run(&mut memory_system, &config_system.config_items, startup_logger);
+
+    if ask_for_enter {
+        user_interface::UserInterface::enter_key_to_close_on_windows();
+    }
+    process::exit(0);
 }

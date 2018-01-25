@@ -1,4 +1,4 @@
-[ ] Add an interactive, runtime user interface:
+[X] Add an interactive, runtime user interface:
 
 The emulator would be much more intuitive if it had a runtime user interface
 system that would allow the user to change settings on the fly.
@@ -28,6 +28,29 @@ Some of the interesting features this will allow is better cassette support,
 the ability to load text files into the emulator via the keyboard system,
 and of course the ability to change settings without having to modify the
 configuration file by hand.
+
+
+Comment:
+
+After a short while of experimenting with rustyline, it has shown that it is
+not capable of doing what I need, the command prompt does indeed get garbled
+when messages are displayed at the same time as the command prompt is displayed
+and awaiting a command.
+
+I decided to port over the curses-based user interface I use in my code testbed
+project, the dooshputor.  The problem with the curses-based interface is that
+for the sake of simplicity, since I never intended to port the interface over
+to trs80m1-rs, it does not support unicode (filters unicode characters out with
+question marks, and doesn't accept them as valid keyboard input).  As a
+consequence, any filenames specified in the curses-based user interface must
+consist of ascii-only characters.
+
+
+[ ] Make the emulator configurable via the curses-based user interface:
+
+This is mostly a continuation of the previous task, since while we now have
+an interactive, runtime user interface, it can not yet change configuration
+options.
 
 
 [ ] Add sound support:

@@ -61,7 +61,9 @@ Some of the specifics of the keyboard mechanism:
 
     - The clear key is provided by F2 and Delete.
 
-    - The F5 key closes the emulator.
+    - The F4 key pauses or unpauses the emulator.
+
+    - The F5 key performs a full reset of the emulator.
 
     - The F11 key toggles the fullscreen mode.
 
