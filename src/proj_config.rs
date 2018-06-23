@@ -114,29 +114,75 @@ impl ConfigItems {
     }
 }
 
+#[derive(Debug)]
+pub enum ConfigInfoSource {
+    ConfigFile { line_number: usize, line_text: String },
+    ExternalSource { section_name: String, entry_name: String, invocation_text: String },
+}
+
+impl ConfigInfoSource {
+    fn from_config_file(line_number: usize, line_text: &str) -> ConfigInfoSource {
+        ConfigInfoSource::ConfigFile {
+            line_number: line_number,
+            line_text:   line_text.to_owned(),
+        }
+    }
+    fn from_external_source(section_name: &str, entry_name: &str, invocation_text: &str) -> ConfigInfoSource {
+        ConfigInfoSource::ExternalSource {
+            section_name:    section_name.to_owned(),
+            entry_name:      entry_name.to_owned(),
+            invocation_text: invocation_text.to_owned(),
+        }
+    }
+    fn error_prefix(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ConfigInfoSource::ConfigFile { line_number, ref line_text } => {
+                write!(f, "error on line {}, `{}', ", line_number + 1, line_text)
+            },
+            ConfigInfoSource::ExternalSource { ref section_name, ref entry_name, ref invocation_text } => {
+                write!(f, "invalid new value `{}' for the config entry `{}' of the [{}] section: ", retrieve_entry_assignee(invocation_text).as_str(), entry_name, section_name)
+            },
+        }
+    }
+    fn argument_text(&self) -> String {
+        match *self {
+            ConfigInfoSource::ConfigFile { ref line_text, .. } => {
+                retrieve_entry_assignee(line_text)
+            },
+            ConfigInfoSource::ExternalSource { ref invocation_text, .. } => {
+                retrieve_entry_assignee(invocation_text)
+            },
+        }
+    }
+}
+
 // Error structure used within the module:
 #[derive(Debug)]
-enum ConfigError {
+pub enum ConfigError {
     RedundantSection(String, usize, usize),
     RedundantEntry(String, String, usize, usize),
-    EntryIntParsingError(usize, String, num::ParseIntError),
-    TextAfterConfigSectionClosingBracket(usize, String),
-    NonAlphaCharactersInConfigSectionName(usize, String),
-    ClosingBracketMissingInConfigSectionHeader(usize, String),
-    EntryNameBeginsWithNonAlpha(usize, String),
-    EntryNameContainsSpaces(usize, String),
-    EntryNameContainsNonAlnumChars(usize, String),
-    EntryContainsSeveralEqualsSigns(usize, String),
-    EntryEqualsSignMissing(usize, String),
-    EntryArgumentMissing(usize, String),
-    InvalidResolutionSpecifier(usize, String),
-    InvalidColorSpecifier(usize, String),
-    InvalidBoolSpecifier(usize, String),
-    InvalidCassetteFormatSpecifier(usize, String),
-    InvalidRamSpecifier(usize, String),
-    TooMuchRamRequested(u32),
-    DefaultRomOutOfRange(u32),
-    CharacterGeneratorOutOfRange(u32),
+    EntryIntParsingError(ConfigInfoSource, num::ParseIntError),
+    TextAfterConfigSectionClosingBracket(ConfigInfoSource),
+    NonAlphaCharactersInConfigSectionName(ConfigInfoSource),
+    ClosingBracketMissingInConfigSectionHeader(ConfigInfoSource),
+    EntryNameBeginsWithNonAlpha(ConfigInfoSource),
+    EntryNameContainsSpaces(ConfigInfoSource),
+    EntryNameContainsNonAlnumChars(ConfigInfoSource),
+    EntryContainsSeveralEqualsSigns(ConfigInfoSource),
+    EntryEqualsSignMissing(ConfigInfoSource),
+    EntryArgumentMissing(ConfigInfoSource),
+    InvalidResolutionSpecifier(ConfigInfoSource),
+    InvalidColorSpecifier(ConfigInfoSource),
+    InvalidBoolSpecifier(ConfigInfoSource),
+    InvalidCassetteFormatSpecifier(ConfigInfoSource),
+    InvalidRamSpecifier(ConfigInfoSource),
+    TooMuchRamRequested(ConfigInfoSource, u32),
+    DefaultRomOutOfRange(ConfigInfoSource, u32),
+    CharacterGeneratorOutOfRange(ConfigInfoSource, u32),
+    EntrySpecNoSectionNameSpecified(String),
+    EntrySpecNoEntryNameSpecified(String),
+    EntrySpecNoSuchConfigEntry(String),
+    IoError(io::Error),
 }
 
 impl fmt::Display for ConfigError {
@@ -148,63 +194,93 @@ impl fmt::Display for ConfigError {
             ConfigError::RedundantEntry(ref section_name, ref entry_name, first, second) => {
                 write!(f, "entry `{}' is present more than once in the `[{}]' section of the config file, on line {} and line {}", entry_name, section_name, first + 1, second + 1)
             },
-            ConfigError::EntryIntParsingError(line_number, ref line, ref inner_error) => {
-                write!(f, "error on line {}, `{}', failed to parse the entry argument: {}", line_number + 1, line, inner_error)
+            ConfigError::EntryIntParsingError(ref info_source, ref inner_error) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "failed to parse the entry argument: {}", inner_error)
             },
-            ConfigError::TextAfterConfigSectionClosingBracket(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', there is text present after the config section header's closing bracket", line_number + 1, line)
+            ConfigError::TextAfterConfigSectionClosingBracket(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "there is text present after the config section header's closing bracket")
             },
-            ConfigError::NonAlphaCharactersInConfigSectionName(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the config section name contains non-alphabetical characters", line_number + 1, line)
+            ConfigError::NonAlphaCharactersInConfigSectionName(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the config section name contains non-alphabetical characters")
             },
-            ConfigError::ClosingBracketMissingInConfigSectionHeader(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the closing bracket is missing in the config section header", line_number + 1, line)
+            ConfigError::ClosingBracketMissingInConfigSectionHeader(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the closing bracket is missing in the config section header")
             },
-            ConfigError::EntryNameBeginsWithNonAlpha(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the entry's name begins with a non-alphabetical character", line_number + 1, line)
+            ConfigError::EntryNameBeginsWithNonAlpha(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the entry's name begins with a non-alphabetical character")
             },
-            ConfigError::EntryNameContainsSpaces(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the entry's name contains spaces", line_number + 1, line)
+            ConfigError::EntryNameContainsSpaces(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the entry's name contains spaces")
             },
-            ConfigError::EntryNameContainsNonAlnumChars(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the entry's name contains non-alphanumerical characters", line_number + 1, line)
+            ConfigError::EntryNameContainsNonAlnumChars(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the entry's name contains non-alphanumerical characters")
             },
-            ConfigError::EntryContainsSeveralEqualsSigns(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the entry contains several equals signs", line_number + 1, line)
+            ConfigError::EntryContainsSeveralEqualsSigns(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the entry contains several equals signs")
             },
-            ConfigError::EntryEqualsSignMissing(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the entry doesn't contain an equals sign", line_number + 1, line)
+            ConfigError::EntryEqualsSignMissing(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the entry doesn't contain an equals sign")
             },
-            ConfigError::EntryArgumentMissing(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', the entry doesn't contain an argument", line_number + 1, line)
+            ConfigError::EntryArgumentMissing(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the entry doesn't contain an argument")
             },
-            ConfigError::InvalidResolutionSpecifier(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', invalid resolution specification", line_number + 1, line)
+            ConfigError::InvalidResolutionSpecifier(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "invalid resolution specification")
             },
-            ConfigError::InvalidColorSpecifier(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', invalid color specification", line_number + 1, line)
+            ConfigError::InvalidColorSpecifier(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "invalid color specification")
             },
-            ConfigError::InvalidBoolSpecifier(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', invalid boolean specification", line_number + 1, line)
+            ConfigError::InvalidBoolSpecifier(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "invalid boolean specification")
             },
-            ConfigError::InvalidCassetteFormatSpecifier(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', invalid cassette format specification, please use either CAS or CPT", line_number + 1, line)
+            ConfigError::InvalidCassetteFormatSpecifier(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "invalid cassette format specification, please use either CAS or CPT")
             },
-            ConfigError::InvalidRamSpecifier(line_number, ref line) => {
-                write!(f, "error on line {}, `{}', invalid ram specification", line_number + 1, line)
+            ConfigError::InvalidRamSpecifier(ref info_source) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "invalid ram specification")
             },
-            ConfigError::TooMuchRamRequested(ram_requested) => {
+            ConfigError::TooMuchRamRequested(ref info_source, ram_requested) => {
+                try!(info_source.error_prefix(f));
                 if (ram_requested % 1024) == 0 {
                     write!(f, "the requested amout of ram ({}K) is more than what can be installed in the machine, it supports only up to 48K (49152 bytes) of ram", ram_requested / 1024)
                 } else {
                     write!(f, "the requested amount of ram ({} bytes) is more than what can be installed in the machine, it supports only up to 48K (49152 bytes) of ram", ram_requested)
                 }
             }
-            ConfigError::DefaultRomOutOfRange(selection) => {
+            ConfigError::DefaultRomOutOfRange(ref info_source, selection) => {
+                try!(info_source.error_prefix(f));
                 write!(f, "the specified default rom selection of {} is out of range, please choose either 1 (level 1 basic), 2 (level 2 basic), or 3 (miscellaneous rom)", selection)
             },
-            ConfigError::CharacterGeneratorOutOfRange(selection) => {
-                write!(f, "the specified character generator selection of {} is out of range, please choose from 1 to 3.", selection)
+            ConfigError::CharacterGeneratorOutOfRange(ref info_source, selection) => {
+                try!(info_source.error_prefix(f));
+                write!(f, "the specified character generator selection of {} is out of range, please choose from 1 to 3", selection)
+            },
+            ConfigError::EntrySpecNoSectionNameSpecified(ref entry_specifier) => {
+                write!(f, "invalid entry specifier `{}': no section name specified", entry_specifier)
+            },
+            ConfigError::EntrySpecNoEntryNameSpecified(ref entry_specifier) => {
+                write!(f, "invalid entry specifier `{}': no entry name specified", entry_specifier)
+            },
+            ConfigError::EntrySpecNoSuchConfigEntry(ref entry_specifier) => {
+                write!(f, "entry specifier `{}' does not correspond to any config entry", entry_specifier)
+            },
+            ConfigError::IoError(ref io_error) => {
+                io_error.fmt(f)
             },
         }
     }
@@ -233,7 +309,17 @@ impl error::Error for ConfigError {
             ConfigError::TooMuchRamRequested(..)             => { "more ram requested than the machine supports" },
             ConfigError::DefaultRomOutOfRange(..)            => { "default rom selection out of range" },
             ConfigError::CharacterGeneratorOutOfRange(..)    => { "character generator selection out of range" },
+            ConfigError::EntrySpecNoSectionNameSpecified(..) => { "entry specifier is missing entry name" },
+            ConfigError::EntrySpecNoEntryNameSpecified(..)   => { "entry specifier is missing section name" },
+            ConfigError::EntrySpecNoSuchConfigEntry(..)      => { "entry specifier refers to a non-existent entry" },
+            ConfigError::IoError(ref io_error)               => { io_error.description() },
         }
+    }
+}
+
+impl From<io::Error> for ConfigError {
+    fn from(io_error: io::Error) -> ConfigError {
+        ConfigError::IoError(io_error)
     }
 }
 
@@ -247,10 +333,10 @@ struct ConfigEntry {
     default_text: Box<[String]>,
 
     // Return an up-to-date version of the entry line, or none if already ok:
-    update_line: fn(usize, &str, &mut ConfigItems) -> Option<String>,
+    update_line: fn(ConfigInfoSource, &mut ConfigItems) -> Option<String>,
 
     // Parse the entry line and update the in-memory representation:
-    parse_entry: fn(usize, &str, &mut ConfigItems) -> Result<(), ConfigError>,
+    parse_entry: fn(ConfigInfoSource, &mut ConfigItems) -> Result<(), ConfigError>,
 }
 
 // Representation of a section:
@@ -363,15 +449,15 @@ impl ConfigSystem {
                                 let mut found_closing_bracket = false;
                                 for current_char_ch in chars {
                                     if found_closing_bracket {
-                                        return Err(ConfigError::TextAfterConfigSectionClosingBracket(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                        return Err(ConfigError::TextAfterConfigSectionClosingBracket(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                     } else if current_char_ch == ']' {
                                         found_closing_bracket = true;
                                     } else if !current_char_ch.is_alphabetic() && !current_char_ch.is_whitespace() {
-                                        return Err(ConfigError::NonAlphaCharactersInConfigSectionName(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                        return Err(ConfigError::NonAlphaCharactersInConfigSectionName(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                     }
                                 }
                                 if !found_closing_bracket {
-                                    return Err(ConfigError::ClosingBracketMissingInConfigSectionHeader(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                    return Err(ConfigError::ClosingBracketMissingInConfigSectionHeader(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                 }
                             },
 
@@ -384,7 +470,7 @@ impl ConfigSystem {
                                 let mut found_space_before_equals = false;
 
                                 if !first_char_ch.is_alphabetic() {
-                                    return Err(ConfigError::EntryNameBeginsWithNonAlpha(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                    return Err(ConfigError::EntryNameBeginsWithNonAlpha(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                 }
                                 for current_char_ch in chars {
                                     if !found_equals {
@@ -392,26 +478,26 @@ impl ConfigSystem {
                                             found_space_before_equals = true;
                                         } else if current_char_ch.is_alphanumeric() || current_char_ch == '_' {
                                             if found_space_before_equals {
-                                                return Err(ConfigError::EntryNameContainsSpaces(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                                return Err(ConfigError::EntryNameContainsSpaces(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                             }
                                         } else if current_char_ch == '=' {
                                             found_equals = true;
                                         } else {
-                                            return Err(ConfigError::EntryNameContainsNonAlnumChars(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                            return Err(ConfigError::EntryNameContainsNonAlnumChars(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                         }
                                     } else {
                                         if current_char_ch == '=' {
-                                            return Err(ConfigError::EntryContainsSeveralEqualsSigns(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                            return Err(ConfigError::EntryContainsSeveralEqualsSigns(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                         } else if !found_argument && !current_char_ch.is_whitespace() {
                                             found_argument = true;
                                         }
                                     }
                                 }
                                 if !found_equals {
-                                    return Err(ConfigError::EntryEqualsSignMissing(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                    return Err(ConfigError::EntryEqualsSignMissing(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                 }
                                 if !found_argument {
-                                    return Err(ConfigError::EntryArgumentMissing(line_iter, self.conf_file_lines[line_iter].to_owned()));
+                                    return Err(ConfigError::EntryArgumentMissing(ConfigInfoSource::from_config_file(line_iter, &self.conf_file_lines[line_iter])));
                                 }
                             },
                         }
@@ -466,7 +552,7 @@ impl ConfigSystem {
                         try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)).expect(format!(".expect() call: Unable to find the freshly added `{}' entry in the `[{}]' section", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name).as_str())
                     },
                 };
-                try!((self.config_sections[section_iter].entries[entry_iter].parse_entry)(entry_loc, &self.conf_file_lines[entry_loc], &mut self.config_items));
+                try!((self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_config_file(entry_loc, &self.conf_file_lines[entry_loc]), &mut self.config_items));
             }
         }
 
@@ -544,7 +630,7 @@ impl ConfigSystem {
             Ok(None)
         }
     }
-    fn write_config_file(&self) -> Result<(), io::Error> {
+    fn write_config_file(&self) -> Result<(), ConfigError> {
 
         // Use CR/LF on Windows, and plain LF everywhere else:
         let eol_mark = match cfg!(target_os = "windows") {
@@ -559,6 +645,135 @@ impl ConfigSystem {
         }
 
         Ok(())
+    }
+    fn parse_entry_specifier(entry_specifier: &str) -> Result<(String, String), ConfigError> {
+        let mut section_acc = String::new();
+        let mut entry_acc = String::new();
+
+        let mut have_section = false;
+
+        for character in entry_specifier.chars() {
+            if !have_section {
+                if character == '_' {
+                    have_section = true;
+                } else {
+                    section_acc.push(character);
+                }
+            } else {
+                entry_acc.push(character);
+            }
+        }
+        let section = section_acc;
+        let entry   = entry_acc;
+
+        if !have_section {
+            Err(ConfigError::EntrySpecNoEntryNameSpecified(entry_specifier.to_owned()))
+        } else if section.is_empty() {
+            Err(ConfigError::EntrySpecNoSectionNameSpecified(entry_specifier.to_owned()))
+        } else if entry.is_empty() {
+            Err(ConfigError::EntrySpecNoEntryNameSpecified(entry_specifier.to_owned()))
+        } else {
+            Ok((section.to_lowercase(), entry.to_lowercase()))
+        }
+    }
+    pub fn get_config_entry_current_state(&self, entry_specifier: &str) -> Result<String, ConfigError> {
+        let (requested_section, requested_entry) = try!(ConfigSystem::parse_entry_specifier(entry_specifier));
+
+        for section_iter in 0..self.config_sections.len() {
+            let section_name_lc = self.config_sections[section_iter].section_name.to_lowercase();
+
+            if section_name_lc == requested_section {
+                let (start_index, end_index) = match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+                    Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
+                    None => {
+                        panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
+                    }
+                };
+                for entry_iter in 0..self.config_sections[section_iter].entries.len() {
+                    let entry_name_lc = self.config_sections[section_iter].entries[entry_iter].entry_name.to_lowercase();
+
+                    if entry_name_lc == requested_entry {
+                        let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                            Some(loc) => { loc },
+                            None => {
+                                panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
+                            },
+                        };
+                        let assignee = retrieve_entry_assignee(&self.conf_file_lines[entry_loc]);
+                        return Ok(format!("{}_{} = {}", section_name_lc, entry_name_lc, assignee));
+                    }
+                }
+            }
+        }
+        Err(ConfigError::EntrySpecNoSuchConfigEntry(entry_specifier.to_owned()))
+    }
+    pub fn get_config_entry_current_state_all(&self) -> Result<Vec<String>, ConfigError> {
+        let mut entry_state_collection = Vec::new();
+
+        for section_iter in 0..self.config_sections.len() {
+            let section_name_lc = self.config_sections[section_iter].section_name.to_lowercase();
+
+            let (start_index, end_index) = match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+                Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
+                None => {
+                    panic!("ConfigSystem::get_config_entry_current_state_all(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
+                }
+            };
+            for entry_iter in 0..self.config_sections[section_iter].entries.len() {
+                let entry_name_lc = self.config_sections[section_iter].entries[entry_iter].entry_name.to_lowercase();
+
+                let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                    Some(loc) => { loc },
+                    None => {
+                        panic!("ConfigSystem::get_config_entry_current_state_all(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
+                    },
+                };
+                let assignee = retrieve_entry_assignee(&self.conf_file_lines[entry_loc]);
+
+                entry_state_collection.push(format!("{}_{} = {}", section_name_lc, entry_name_lc, assignee));
+            }
+        }
+
+        Ok(entry_state_collection)
+    }
+    pub fn change_config_entry(&mut self, entry_specifier: &str, invocation_text: &str) -> Result<(), ConfigError> {
+        let (requested_section, requested_entry) = try!(ConfigSystem::parse_entry_specifier(entry_specifier));
+
+        for section_iter in 0..self.config_sections.len() {
+            let section_name_lc = self.config_sections[section_iter].section_name.to_lowercase();
+
+            if section_name_lc == requested_section {
+                let (start_index, end_index) = match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+                    Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
+                    None => {
+                        panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
+                    }
+                };
+                for entry_iter in 0..self.config_sections[section_iter].entries.len() {
+                    let entry_name_lc = self.config_sections[section_iter].entries[entry_iter].entry_name.to_lowercase();
+
+                    if entry_name_lc == requested_entry {
+                        let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                            Some(loc) => { loc },
+                            None => {
+                                panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
+                            },
+                        };
+                        try!((self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_external_source(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, invocation_text), &mut self.config_items));
+                        match (self.config_sections[section_iter].entries[entry_iter].update_line)(ConfigInfoSource::from_config_file(entry_loc, &self.conf_file_lines[entry_loc]), &mut self.config_items) {
+                            Some(updated_line) => {
+                                self.conf_file_lines[entry_loc] = updated_line;
+                                try!(self.write_config_file());
+                            },
+                            None => {
+                            },
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Err(ConfigError::EntrySpecNoSuchConfigEntry(entry_specifier.to_owned()))
     }
 }
 
@@ -886,12 +1101,12 @@ fn parse_bool_argument(entry_argument: &str) -> Option<bool> {
 }
 
 // The general section and entries:
-fn update_line_general_level_1_rom(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_general_level_1_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.general_level_1_rom.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_general_level_1_rom(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_general_level_1_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -911,12 +1126,12 @@ fn update_line_general_level_1_rom(line_number: usize, old_string: &str, config_
         None
     }
 }
-fn update_line_general_level_2_rom(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_general_level_2_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.general_level_2_rom.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_general_level_2_rom(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_general_level_2_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -936,12 +1151,12 @@ fn update_line_general_level_2_rom(line_number: usize, old_string: &str, config_
         None
     }
 }
-fn update_line_general_misc_rom(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_general_misc_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.general_misc_rom.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_general_misc_rom(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_general_misc_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -962,8 +1177,8 @@ fn update_line_general_misc_rom(line_number: usize, old_string: &str, config_ite
     }
 }
 
-fn parse_entry_general_level_1_rom(_line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_general_level_1_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
 
     if argument.to_uppercase() == "NONE" {
         config_items.general_level_1_rom = None;
@@ -973,8 +1188,8 @@ fn parse_entry_general_level_1_rom(_line_number: usize, entry_string: &str, conf
 
     Ok(())
 }
-fn parse_entry_general_level_2_rom(_line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_general_level_2_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
 
     if argument.to_uppercase() == "NONE" {
         config_items.general_level_2_rom = None;
@@ -984,8 +1199,8 @@ fn parse_entry_general_level_2_rom(_line_number: usize, entry_string: &str, conf
 
     Ok(())
 }
-fn parse_entry_general_misc_rom(_line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_general_misc_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
 
     if argument.to_uppercase() == "NONE" {
         config_items.general_misc_rom = None;
@@ -996,12 +1211,12 @@ fn parse_entry_general_misc_rom(_line_number: usize, entry_string: &str, config_
     Ok(())
 }
 
-fn update_line_general_default_rom(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_general_default_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.general_default_rom;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_general_default_rom(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_general_default_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1014,26 +1229,26 @@ fn update_line_general_default_rom(line_number: usize, old_string: &str, config_
         None
     }
 }
-fn parse_entry_general_default_rom(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = match retrieve_entry_assignee(entry_string).parse::<u32>() {
+fn parse_entry_general_default_rom(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = match info_source.argument_text().parse::<u32>() {
         Ok(result) => { result },
-        Err(error) => { return Err(ConfigError::EntryIntParsingError(line_number, entry_string.to_owned(), error)); },
+        Err(error) => { return Err(ConfigError::EntryIntParsingError(info_source, error)); },
     };
 
     if argument >= 1 && argument <= 3 {
         config_items.general_default_rom = argument;
         Ok(())
     } else {
-        Err(ConfigError::DefaultRomOutOfRange(argument))
+        Err(ConfigError::DefaultRomOutOfRange(info_source, argument))
     }
 }
 
-fn update_line_general_ram_size(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_general_ram_size(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.general_ram_size;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_general_ram_size(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_general_ram_size(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1050,11 +1265,11 @@ fn update_line_general_ram_size(line_number: usize, old_string: &str, config_ite
         None
     }
 }
-fn parse_entry_general_ram_size(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+fn parse_entry_general_ram_size(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
     let mut new_ram_size = 0;
     let mut found_suffix = false;
 
-    for character in retrieve_entry_assignee(entry_string).chars() {
+    for character in info_source.argument_text().chars() {
         if !found_suffix {
             match character.to_digit(10) {
                 Some(digit) => {
@@ -1065,19 +1280,19 @@ fn parse_entry_general_ram_size(line_number: usize, entry_string: &str, config_i
                         new_ram_size *= 1024;
                         found_suffix = true;
                     } else {
-                        return Err(ConfigError::InvalidRamSpecifier(line_number, entry_string.to_owned()));
+                        return Err(ConfigError::InvalidRamSpecifier(info_source));
                     }
                 },
             }
         } else {
-            return Err(ConfigError::InvalidRamSpecifier(line_number, entry_string.to_owned()));
+            return Err(ConfigError::InvalidRamSpecifier(info_source));
         }
     }
     if new_ram_size <= 48 * 1024 {
         config_items.general_ram_size = new_ram_size;
         Ok(())
     } else {
-        Err((ConfigError::TooMuchRamRequested(new_ram_size)))
+        Err(ConfigError::TooMuchRamRequested(info_source, new_ram_size))
     }
 }
 
@@ -1186,12 +1401,12 @@ fn new_general_section() -> ConfigSection {
 }
 
 // The keyboard section and entries:
-fn update_line_keyboard_ms_per_keypress(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_keyboard_ms_per_keypress(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.keyboard_ms_per_keypress;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_keyboard_ms_per_keypress(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_keyboard_ms_per_keypress(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1205,10 +1420,10 @@ fn update_line_keyboard_ms_per_keypress(line_number: usize, old_string: &str, co
     }
 }
 
-fn parse_entry_keyboard_ms_per_keypress(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = match retrieve_entry_assignee(entry_string).parse::<u32>() {
+fn parse_entry_keyboard_ms_per_keypress(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = match info_source.argument_text().parse::<u32>() {
         Ok(result) => { result },
-        Err(error) => { return Err(ConfigError::EntryIntParsingError(line_number, entry_string.to_owned(), error)); },
+        Err(error) => { return Err(ConfigError::EntryIntParsingError(info_source, error)); },
     };
 
     config_items.keyboard_ms_per_keypress = argument;
@@ -1248,12 +1463,12 @@ fn new_keyboard_section() -> ConfigSection {
 }
 
 // The video section and entries:
-fn update_line_video_windowed_resolution(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_windowed_resolution(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_windowed_resolution;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_windowed_resolution(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_windowed_resolution(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1267,12 +1482,12 @@ fn update_line_video_windowed_resolution(line_number: usize, old_string: &str, c
         None
     }
 }
-fn update_line_video_fullscreen_resolution(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_fullscreen_resolution(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_fullscreen_resolution;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_fullscreen_resolution(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_fullscreen_resolution(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1286,35 +1501,35 @@ fn update_line_video_fullscreen_resolution(line_number: usize, old_string: &str,
         None
     }
 }
-fn parse_entry_video_windowed_resolution(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_resolution_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_windowed_resolution(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_resolution_argument(info_source.argument_text().as_str()) {
         Some(resolution) => {
             config_items.video_windowed_resolution = resolution;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidResolutionSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidResolutionSpecifier(info_source))
         }
     }
 }
-fn parse_entry_video_fullscreen_resolution(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_resolution_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_fullscreen_resolution(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_resolution_argument(info_source.argument_text().as_str()) {
         Some(resolution) => {
             config_items.video_fullscreen_resolution = resolution;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidResolutionSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidResolutionSpecifier(info_source))
         }
     }
 }
 
-fn update_line_video_bg_color(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_bg_color(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_bg_color;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_bg_color(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_bg_color(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1323,17 +1538,17 @@ fn update_line_video_bg_color(line_number: usize, old_string: &str, config_items
     if failed_read || config_items.video_bg_color != new_val {
         config_items.video_bg_color = new_val;
         let (red, green, blue) = new_val;
-        Some(format!("bg_color = ;{:02X}{:02X}{:02X}", red, green, blue))
+        Some(format!("bg_color = #{:02X}{:02X}{:02X}", red, green, blue))
     } else {
         None
     }
 }
-fn update_line_video_fg_color(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_fg_color(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_fg_color;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_fg_color(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_fg_color(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1342,40 +1557,40 @@ fn update_line_video_fg_color(line_number: usize, old_string: &str, config_items
     if failed_read || config_items.video_fg_color != new_val {
         config_items.video_fg_color = new_val;
         let (red, green, blue) = new_val;
-        Some(format!("fg_color = ;{:02X}{:02X}{:02X}", red, green, blue))
+        Some(format!("fg_color = #{:02X}{:02X}{:02X}", red, green, blue))
     } else {
         None
     }
 }
-fn parse_entry_video_bg_color(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_color_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_bg_color(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_color_argument(info_source.argument_text().as_str()) {
         Some(color) => {
             config_items.video_bg_color = color;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidColorSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidColorSpecifier(info_source))
         }
     }
 }
-fn parse_entry_video_fg_color(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_color_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_fg_color(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_color_argument(info_source.argument_text().as_str()) {
         Some(color) => {
             config_items.video_fg_color = color;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidColorSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidColorSpecifier(info_source))
         }
     }
 }
 
-fn update_line_video_desktop_fullscreen_mode(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_desktop_fullscreen_mode(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_desktop_fullscreen_mode;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_desktop_fullscreen_mode(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_desktop_fullscreen_mode(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1388,24 +1603,24 @@ fn update_line_video_desktop_fullscreen_mode(line_number: usize, old_string: &st
         None
     }
 }
-fn parse_entry_video_desktop_fullscreen_mode(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_bool_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_desktop_fullscreen_mode(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_bool_argument(info_source.argument_text().as_str()) {
         Some(value) => {
             config_items.video_desktop_fullscreen_mode = value;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidBoolSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidBoolSpecifier(info_source))
         }
     }
 }
 
-fn update_line_video_use_hw_accel(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_use_hw_accel(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_use_hw_accel;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_use_hw_accel(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_use_hw_accel(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1418,24 +1633,24 @@ fn update_line_video_use_hw_accel(line_number: usize, old_string: &str, config_i
         None
     }
 }
-fn parse_entry_video_use_hw_accel(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_bool_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_use_hw_accel(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_bool_argument(info_source.argument_text().as_str()) {
         Some(value) => {
             config_items.video_use_hw_accel = value;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidBoolSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidBoolSpecifier(info_source))
         }
     }
 }
 
-fn update_line_video_character_generator(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_character_generator(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_character_generator;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_character_generator(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_character_generator(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1448,26 +1663,26 @@ fn update_line_video_character_generator(line_number: usize, old_string: &str, c
         None
     }
 }
-fn parse_entry_video_character_generator(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = match retrieve_entry_assignee(entry_string).parse::<u32>() {
+fn parse_entry_video_character_generator(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = match info_source.argument_text().parse::<u32>() {
         Ok(result) => { result },
-        Err(error) => { return Err(ConfigError::EntryIntParsingError(line_number, entry_string.to_owned(), error)); },
+        Err(error) => { return Err(ConfigError::EntryIntParsingError(info_source, error)); },
     };
 
     if argument >= 1 && argument <= 3 {
         config_items.video_character_generator = argument;
         Ok(())
     } else {
-        Err(ConfigError::CharacterGeneratorOutOfRange(argument))
+        Err(ConfigError::CharacterGeneratorOutOfRange(info_source, argument))
     }
 }
 
-fn update_line_video_lowercase_mod(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_video_lowercase_mod(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_lowercase_mod;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_video_lowercase_mod(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_video_lowercase_mod(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1480,14 +1695,14 @@ fn update_line_video_lowercase_mod(line_number: usize, old_string: &str, config_
         None
     }
 }
-fn parse_entry_video_lowercase_mod(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    match parse_bool_argument(&retrieve_entry_assignee(entry_string)) {
+fn parse_entry_video_lowercase_mod(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_bool_argument(info_source.argument_text().as_str()) {
         Some(value) => {
             config_items.video_lowercase_mod = value;
             Ok(())
         },
         None => {
-            Err(ConfigError::InvalidBoolSpecifier(line_number, entry_string.to_owned()))
+            Err(ConfigError::InvalidBoolSpecifier(info_source))
         }
     }
 }
@@ -1692,12 +1907,12 @@ fn new_video_section() -> ConfigSection {
 }
 
 // The cassette section and entries:
-fn update_line_cassette_input_cassette(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_cassette_input_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.cassette_input_cassette.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_input_cassette(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_cassette_input_cassette(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1717,12 +1932,12 @@ fn update_line_cassette_input_cassette(line_number: usize, old_string: &str, con
         None
     }
 }
-fn update_line_cassette_output_cassette(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_cassette_output_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.cassette_output_cassette.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_output_cassette(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_cassette_output_cassette(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1742,12 +1957,12 @@ fn update_line_cassette_output_cassette(line_number: usize, old_string: &str, co
         None
     }
 }
-fn update_line_cassette_input_cassette_format(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_cassette_input_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.cassette_input_cassette_format;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_input_cassette_format(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_cassette_input_cassette_format(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1767,12 +1982,12 @@ fn update_line_cassette_input_cassette_format(line_number: usize, old_string: &s
         None
     }
 }
-fn update_line_cassette_output_cassette_format(line_number: usize, old_string: &str, config_items: &mut ConfigItems) -> Option<String> {
+fn update_line_cassette_output_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.cassette_output_cassette_format;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_output_cassette_format(line_number, old_string, config_items) {
+    let failed_read = match parse_entry_cassette_output_cassette_format(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
@@ -1792,8 +2007,8 @@ fn update_line_cassette_output_cassette_format(line_number: usize, old_string: &
         None
     }
 }
-fn parse_entry_cassette_input_cassette(_line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_cassette_input_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
 
     if argument.to_uppercase() == "NONE" {
         config_items.cassette_input_cassette = None;
@@ -1803,8 +2018,8 @@ fn parse_entry_cassette_input_cassette(_line_number: usize, entry_string: &str, 
 
     Ok(())
 }
-fn parse_entry_cassette_output_cassette(_line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_cassette_output_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
 
     if argument.to_uppercase() == "NONE" {
         config_items.cassette_output_cassette = None;
@@ -1814,8 +2029,8 @@ fn parse_entry_cassette_output_cassette(_line_number: usize, entry_string: &str,
 
     Ok(())
 }
-fn parse_entry_cassette_input_cassette_format(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_cassette_input_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
     let compare_str = argument.to_uppercase();
 
     if compare_str == "CAS" {
@@ -1825,11 +2040,11 @@ fn parse_entry_cassette_input_cassette_format(line_number: usize, entry_string: 
         config_items.cassette_input_cassette_format = cassette::Format::CPT;
         Ok(())
     } else {
-        Err(ConfigError::InvalidCassetteFormatSpecifier(line_number, entry_string.to_owned()))
+        Err(ConfigError::InvalidCassetteFormatSpecifier(info_source))
     }
 }
-fn parse_entry_cassette_output_cassette_format(line_number: usize, entry_string: &str, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = retrieve_entry_assignee(entry_string);
+fn parse_entry_cassette_output_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = info_source.argument_text();
     let compare_str = argument.to_uppercase();
 
     if compare_str == "CAS" {
@@ -1839,7 +2054,7 @@ fn parse_entry_cassette_output_cassette_format(line_number: usize, entry_string:
         config_items.cassette_output_cassette_format = cassette::Format::CPT;
         Ok(())
     } else {
-        Err(ConfigError::InvalidCassetteFormatSpecifier(line_number, entry_string.to_owned()))
+        Err(ConfigError::InvalidCassetteFormatSpecifier(info_source))
     }
 }
 fn new_handler_cassette_input_cassette() -> ConfigEntry {

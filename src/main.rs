@@ -101,7 +101,7 @@ fn main() {
 
     let mut startup_logger = util::StartupLogger::new();
 
-    let config_system = match proj_config::ConfigSystem::new(&config_dir, &mut startup_logger) {
+    let mut config_system = match proj_config::ConfigSystem::new(&config_dir, &mut startup_logger) {
         Some(system) => { system },
         None => {
             eprintln!("Failed to initialize the emulator.");
@@ -130,7 +130,7 @@ fn main() {
         },
     };
     let mut emulator = emulator::Emulator::new(&config_system.config_items, &mut startup_logger);
-    let ask_for_enter = emulator.run(&mut memory_system, &config_system.config_items, startup_logger);
+    let ask_for_enter = emulator.run(&mut memory_system, &mut config_system, startup_logger);
 
     if ask_for_enter {
         user_interface::UserInterface::enter_key_to_close_on_windows();

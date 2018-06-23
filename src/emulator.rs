@@ -107,7 +107,7 @@ impl Emulator {
     }
     // Runs the emulator; returns whether to ask for the user to press Enter
     // to close the program on Windows.
-    pub fn run(&mut self, memory_system: &mut memory::MemorySystem, config_items: &proj_config::ConfigItems, mut startup_logger: util::StartupLogger) -> bool {
+    pub fn run(&mut self, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem, mut startup_logger: util::StartupLogger) -> bool {
         let mut frame_begin:     std_time::Duration;
         let mut frame_end:       std_time::Duration;
         let mut last_frame_ns:   u32;
@@ -121,13 +121,13 @@ impl Emulator {
         sdl.mouse().show_cursor(false);
 
         // Create a rendering context:
-        let (width, height) = config_items.video_windowed_resolution;
+        let (width, height) = config_system.config_items.video_windowed_resolution;
         let mut window_builder = video.window("trs80m1-rs", width, height);
         let window = window_builder.position_centered().build().expect(".expect() call: Failed to create the SDL2 window");
 
         let mut renderer: sdl2::render::Renderer;
         let ns_per_frame: u32;
-        if config_items.video_use_hw_accel {
+        if config_system.config_items.video_use_hw_accel {
             match window.display_mode() {
                 Ok(mode) => {
                     renderer = window.renderer().accelerated().present_vsync().build().expect(".expect() call: Failed to create an accelerated SDL2 renderer with vsync");
@@ -177,15 +177,15 @@ impl Emulator {
             self.input_system.handle_events(&mut self.exit_request, &mut event_pump);
             if self.exit_request { return false; }
             if self.input_system.reset_request {
-                user_interface.execute_command("machine reset full", self, memory_system);
+                user_interface.execute_command("machine reset full", self, memory_system, config_system);
                 self.input_system.reset_request = false;
             }
             if self.input_system.pause_request {
-                user_interface.execute_command("machine pause toggle", self, memory_system);
+                user_interface.execute_command("machine pause toggle", self, memory_system, config_system);
                 self.input_system.pause_request = false;
             }
 
-            user_interface.handle_user_input(self, memory_system);
+            user_interface.handle_user_input(self, memory_system, config_system);
             if self.exit_request { return true; }
 
             if self.powered_on && !self.paused {
@@ -200,7 +200,7 @@ impl Emulator {
                 match self.input_system.fullscreen_request {
                     true => {
                         if !self.desktop_fullscreen {
-                            let (width, height) = config_items.video_fullscreen_resolution;
+                            let (width, height) = config_system.config_items.video_fullscreen_resolution;
                             window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to fullscreen");
                             window.set_fullscreen(sdl2::video::FullscreenType::True).expect(".expect() call: Failed to set the SDL2 window to true fullscreen");
                         } else {
@@ -209,7 +209,7 @@ impl Emulator {
                     },
                     false => {
                         window.set_fullscreen(sdl2::video::FullscreenType::Off).expect(".expect() call: Failed to set the SDL2 window to windowed mode.");
-                        let (width, height) = config_items.video_windowed_resolution;
+                        let (width, height) = config_system.config_items.video_windowed_resolution;
                         window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to windowed mode");
                         window.set_position(sdl2::video::WindowPos::Centered, sdl2::video::WindowPos::Centered);
                     }

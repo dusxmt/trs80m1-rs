@@ -23,6 +23,7 @@ use std::path;
 use emulator;
 use memory;
 use memory::MemoryChipOps;
+use proj_config;
 use pancurses;
 use util;
 use util::MessageLogging;
@@ -88,6 +89,7 @@ enum HelpEntry {
     Messages,
     Machine,
     Memory,
+    Config,
     Exit,
     Alias { alias_name: String, aliased_name: String, help_entry: String },
     Default,
@@ -134,11 +136,19 @@ enum MemorySubCommand {
     Wipe { device: MemorySubCommandArgInclusive },
 }
 
+
+enum ConfigSubCommand {
+    List,
+    Show   { entry_specifier: String },
+    Change { entry_specifier: String, invocation_text: String },
+}
+
 enum ParsedUserCommand {
     Help     (HelpEntry),
     Messages (MessagesSubCommand),
     Machine  (MachineSubCommand),
     Memory   (MemorySubCommand),
+    Config   (ConfigSubCommand),
 
     CommandMissingParameter  { sup_command_name: String, sub_command_name: String, parameter_desc: String, parameter_desc_ia: String },
     CommandMissingSubcommand { sup_command_name: String },
@@ -181,6 +191,8 @@ impl ParsedUserCommand {
                         ParsedUserCommand::Help(HelpEntry::Machine)
                     } else if sub_command == "memory" {
                         ParsedUserCommand::Help(HelpEntry::Memory)
+                    } else if sub_command == "config" {
+                        ParsedUserCommand::Help(HelpEntry::Config)
                     } else if sub_command == "exit" || sub_command == "quit" {
                         ParsedUserCommand::Help(HelpEntry::Exit)
                     } else if sub_command == "clear" || sub_command == "cls" {
@@ -384,6 +396,44 @@ impl ParsedUserCommand {
                     ParsedUserCommand::CommandMissingSubcommand { sup_command_name: command }
                 },
             }
+        } else if command == "config" {
+            match sub_command {
+                Some ((sub_command, sub_command_raw)) => {
+                    if sub_command == "list" {
+                        ParsedUserCommand::Config(ConfigSubCommand::List)
+                    } else if sub_command == "show" {
+                        let entry_specifier = match parameter_1 {
+                                                  Some((_, parameter_1_raw)) => { parameter_1_raw },
+                                                  None => {
+                                                      return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "entry specifier".to_owned(), parameter_desc_ia: "an".to_owned() };
+                                                  },
+                                              };
+                        ParsedUserCommand::Config(ConfigSubCommand::Show { entry_specifier: entry_specifier })
+                    } else if sub_command == "change" {
+                        let entry_specifier = match parameter_1 {
+                                                  Some((_, parameter_1_raw)) => { parameter_1_raw },
+                                                  None => {
+                                                      return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "entry specifier".to_owned(), parameter_desc_ia: "an".to_owned() };
+                                                  },
+                                              };
+                        let equals_sign = match parameter_2 {
+                                              Some((_, parameter_2_raw)) => { parameter_2_raw },
+                                              None => {
+                                                  return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "new value specifier".to_owned(), parameter_desc_ia: "a".to_owned() };
+                                              },
+                                          };
+                        if equals_sign.chars().next().expect("Some((_, parameter_2_raw)) implies non-zero length") != '=' {
+                            return ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: equals_sign, parameter_desc: "new value specifier".to_owned() };
+                        }
+                        ParsedUserCommand::Config(ConfigSubCommand::Change { entry_specifier: entry_specifier, invocation_text: command_string.to_owned() })
+                    } else {
+                        ParsedUserCommand::InvalidSubCommand { sup_command_name: command, sub_command_name: sub_command_raw }
+                    }
+                },
+                None => {
+                    ParsedUserCommand::CommandMissingSubcommand { sup_command_name: command }
+                },
+            }
         } else {
             ParsedUserCommand::InvalidCommand { command_name: command_raw }
         }
@@ -471,7 +521,7 @@ impl UserInterface {
             self.emulator_message(message.as_str());
         }
     }
-    pub fn handle_user_input(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
+    pub fn handle_user_input(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
         loop {
             let user_input = self.window.getch();
             match user_input {
@@ -479,7 +529,7 @@ impl UserInterface {
                     match input {
                         pancurses::Input::KeyResize     => { self.handle_resize_event() },
 
-                        pancurses::Input::KeyF1         => { self.execute_command("help", emulator, memory_system); },
+                        pancurses::Input::KeyF1         => { self.execute_command("help", emulator, memory_system, config_system); },
 
                         pancurses::Input::KeyNPage      => { self.scroll_lines_down(); },
                         pancurses::Input::KeyPPage      => { self.scroll_lines_up(); },
@@ -493,11 +543,11 @@ impl UserInterface {
                         pancurses::Input::KeyHome       => { self.prompt_handle_home_key(); },
                         pancurses::Input::KeyEnd        => { self.prompt_handle_end_key(); },
 
-                        pancurses::Input::KeyEnter      => { self.prompt_handle_enter_key(emulator, memory_system); },
+                        pancurses::Input::KeyEnter      => { self.prompt_handle_enter_key(emulator, memory_system, config_system); },
 
                         pancurses::Input::Unknown(input_code) => {
                             match input_code {
-                                155 => { self.prompt_handle_enter_key(emulator, memory_system); },        // Enter (keypad, w32)
+                                155 => { self.prompt_handle_enter_key(emulator, memory_system, config_system); },  // Enter (keypad, w32)
                                 _   => { },
                             }
                         },
@@ -507,10 +557,10 @@ impl UserInterface {
                                 self.prompt_insert_char(util::ascii_to_printable_char(input_char as u8));
                             } else {
                                 match input_char as u8 {
-                                    0x08  => { self.prompt_handle_backspace_key(); },                    // Backspace (w32)
-                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },  // CTRL+L
-                                    0x0D  => { self.prompt_handle_enter_key(emulator, memory_system); }, // Enter
-                                    0x15  => { self.prompt_handle_ctrl_u(); },                           // CTRL+U
+                                    0x08  => { self.prompt_handle_backspace_key(); },                                    // Backspace (w32)
+                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },                  // CTRL+L
+                                    0x0D  => { self.prompt_handle_enter_key(emulator, memory_system, config_system); },  // Enter
+                                    0x15  => { self.prompt_handle_ctrl_u(); },                                           // CTRL+U
                                     _     => { },
                                 }
                             }
@@ -547,7 +597,7 @@ impl UserInterface {
             self.redraw_needed = true;
         }
     }
-    pub fn execute_command(&mut self, input_str: &str, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
+    pub fn execute_command(&mut self, input_str: &str, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
 
         let command = match util::get_word(input_str, 1) {
                           Some(command_word) => { command_word.to_lowercase() },
@@ -559,20 +609,20 @@ impl UserInterface {
 
         // Alias for "clear screen":
         } else if command == "clear" || command == "cls" {
-            self.execute_command("messages clear all", emulator, memory_system)
+            self.execute_command("messages clear all", emulator, memory_system, config_system)
 
         // Alias for "pause" and "unpause":
         } else if command == "pause" {
-            self.execute_command("machine pause on", emulator, memory_system)
+            self.execute_command("machine pause on", emulator, memory_system, config_system)
 
         } else if command == "unpause" {
-            self.execute_command("machine pause off", emulator, memory_system)
+            self.execute_command("machine pause off", emulator, memory_system, config_system)
 
         } else {
-            self.execute_parsed_command (ParsedUserCommand::parse(input_str), emulator, memory_system);
+            self.execute_parsed_command (ParsedUserCommand::parse(input_str), emulator, memory_system, config_system);
         }
     }
-    fn execute_parsed_command (&mut self, command: ParsedUserCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
+    fn execute_parsed_command (&mut self, command: ParsedUserCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
         match command {
             ParsedUserCommand::Help(help_entry) => {
                 self.show_help_entry(help_entry);
@@ -585,6 +635,9 @@ impl UserInterface {
             },
             ParsedUserCommand::Memory(sub_command) => {
                 self.execute_memory_subcommand(sub_command, memory_system);
+            },
+            ParsedUserCommand::Config(sub_command) => {
+                self.execute_config_subcommand(sub_command, emulator, memory_system, config_system);
             },
             ParsedUserCommand::CommandMissingParameter  { sup_command_name, sub_command_name, parameter_desc, parameter_desc_ia } => {
                 self.emulator_message(format!("The `{} {}' command requires {} {} parameter, see: /help {}", sup_command_name, sub_command_name, parameter_desc_ia, parameter_desc, sup_command_name).as_str());
@@ -620,6 +673,7 @@ impl UserInterface {
                 self.emulator_message("    messages    - manages the messages on the curses-based interface.");
                 self.emulator_message("    machine     - allows you to change the state of the emulated machine.");
                 self.emulator_message("    memory      - allows you to change the state of the memory system.");
+                self.emulator_message("    config      - allows you to change configuration settings.");
                 self.emulator_message("");
                 self.emulator_message("    F1          - alias for `help', pressing F1 shows this message.");
                 self.emulator_message("    clear, cls  - aliases for `messages clear all'.");
@@ -664,6 +718,15 @@ impl UserInterface {
                 self.emulator_message("The offset specifier in `memory load' can be in either decimal, octal, binary or hexadecimal notation.  The default is decimal, a prefix of 0b means binary, 0x means hexadecimal, 0 means octal, and a postfix of h means hexadecimal.");
                 self.emulator_message("");
                 self.emulator_message("In the current implementation, file names may not contain spaces and non-ascii characters.");
+            },
+            HelpEntry::Config => {
+                self.emulator_message("The `config' command has the following sub-commands:");
+                self.emulator_message("");
+                self.emulator_message("    list                               - shows all config entries and their current value.");
+                self.emulator_message("    show   <section>_<entry>           - shows the value of the given config entry.");
+                self.emulator_message("    change <section>_<entry> = <value> - changes the value of the given config entry.");
+                self.emulator_message("");
+                self.emulator_message("Invoking `config change' causes the configuration file to be updated, but closing and re-opening the emulator is required for most options to be applied correctly.");
             },
             HelpEntry::Alias { alias_name, aliased_name, help_entry } => {
                 self.emulator_message(format!("The `{}' command is an alias for `{}', see `/help {}' for more information.", alias_name, aliased_name, help_entry).as_str());
@@ -906,6 +969,45 @@ impl UserInterface {
                     MemorySubCommandArgInclusive::Both => {
                         memory_system.ram_chip.wipe();
                         memory_system.rom_chip.wipe();
+                    },
+                }
+            },
+        }
+    }
+    fn execute_config_subcommand(&mut self, sub_command: ConfigSubCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+        match sub_command {
+            ConfigSubCommand::List => {
+                let config_entries = match config_system.get_config_entry_current_state_all() {
+                    Ok(entries) => { entries },
+                    Err(error) => {
+                        self.emulator_message(format!("Failed to retrieve a listing of config entries: {}.", error).as_str());
+                        return;
+                    },
+                };
+                self.emulator_message("Listing of configuration entries:");
+                for config_entry in config_entries {
+                    self.emulator_message(&config_entry);
+                }
+            },
+            ConfigSubCommand::Show { entry_specifier } => {
+                let config_entry = match config_system.get_config_entry_current_state(&entry_specifier) {
+                    Ok(entry) => { entry },
+                    Err(error) => {
+                        self.emulator_message(format!("Failed to retrieve the requested config entry: {}.", error).as_str());
+                        return;
+                    },
+                };
+                self.emulator_message("Requested configuration entry:");
+                self.emulator_message(&config_entry);
+            },
+            ConfigSubCommand::Change { entry_specifier, invocation_text } => {
+                match config_system.change_config_entry(&entry_specifier, &invocation_text) {
+                    Ok(()) => {
+                        self.emulator_message("Configuration updated.");
+                    },
+                    Err(error) => {
+                        self.emulator_message(format!("Failed to perform the requested configuration change: {}.", error).as_str());
+                        return;
                     },
                 }
             },
@@ -1168,7 +1270,7 @@ impl UserInterface {
             self.redraw_needed = true;
         }
     }
-    fn prompt_handle_enter_key(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
+    fn prompt_handle_enter_key(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
         let entered_text = match self.prompt_history_pos {
             0 => { self.prompt_text.clone() },
             _ => { self.prompt_history[self.prompt_history_pos - 1].clone() },
@@ -1187,7 +1289,7 @@ impl UserInterface {
             if (command_str.len() > 0) && (command_str.chars().next().expect(".expect() call: Somehow there isn't a first character even though command_str.len() > 0 evaluated to true") == '/') {
                  self.send_to_console(command_str.to_owned(), emulator);
             } else {
-                self.execute_command(command_str, emulator, memory_system);
+                self.execute_command(command_str, emulator, memory_system, config_system);
             }
         } else {
             self.send_to_console(entered_text, emulator);
