@@ -38,55 +38,63 @@ pub const CPU_HZ:               u32 = MASTER_HZ     / 6;
 const     NS_PER_CPU_CYCLE:     u32 = 1_000_000_000 / CPU_HZ;
 
 pub struct Emulator {
-    pub cpu:             cpu::CPU,
-    input_system:        keyboard::InputSystem,
-    video_system:        video::VideoSystem,
-    fullscreen:          bool,
-    desktop_fullscreen:  bool,
+    pub cpu:                  cpu::CPU,
+    input_system:             keyboard::InputSystem,
+    video_system:             video::VideoSystem,
 
-    pub powered_on:      bool,
-    pub paused:          bool,
-    pub exit_request:    bool,
+    pub fullscreen:           bool,
+    pub powered_on:           bool,
+    pub paused:               bool,
+    pub exit_request:         bool,
+    pub video_config_update:  bool,
+    pub resolution_update:    bool,
 
     // Keyboard timing information:
-    cycles_per_keypress: u32,
-    cycles_since_last:   u32,
+    cycles_per_keypress:      u32,
+    cycles_since_last:        u32,
 }
 
 impl Emulator {
     pub fn new(config_items: &proj_config::ConfigItems, _startup_logger: &mut util::StartupLogger) -> Emulator {
 
-        // Convert the RGB color values into a single RGB332 value:
         let (red, green, blue) = config_items.video_bg_color;
-        let bg_color = (red    & 0b111_000_00) |
-                       ((green & 0b111_000_00) >> 3) |
-                       ((blue  & 0b110_000_00) >> 6);
+        let bg_color = Emulator::rgb888_into_rgb332(red, green, blue);
 
         let (red, green, blue) = config_items.video_fg_color;
-        let fg_color = (red    & 0b111_000_00) |
-                       ((green & 0b111_000_00) >> 3) |
-                       ((blue  & 0b110_000_00) >> 6);
+        let fg_color = Emulator::rgb888_into_rgb332(red, green, blue);
 
-        // Determine the selected font:
-        let font = match config_items.video_character_generator {
-            1 => { fonts::FontSelector::CG0 },
-            2 => { fonts::FontSelector::CG1 },
-            3 => { fonts::FontSelector::CG2 },
-            _ => { panic!("Invalid character generator selected"); },
-        };
+        let font = Emulator::font_for_character_generator(config_items.video_character_generator);
 
         Emulator {
             cpu:                 cpu::CPU::new(),
             input_system:        keyboard::InputSystem::new(),
             video_system:        video::VideoSystem::new(bg_color, fg_color, font),
             fullscreen:          false,
-            desktop_fullscreen:  config_items.video_desktop_fullscreen_mode,
             powered_on:          false,
             paused:              false,
             exit_request:        false,
+            video_config_update: false,
+            resolution_update:   false,
             cycles_per_keypress: (CPU_HZ * config_items.keyboard_ms_per_keypress) / 1000,
             cycles_since_last:   0,
         }
+    }
+    fn rgb888_into_rgb332(red: u8, green: u8, blue: u8) -> u8 {
+        (red    & 0b111_000_00) |
+        ((green & 0b111_000_00) >> 3) |
+        ((blue  & 0b110_000_00) >> 6)
+    }
+    fn font_for_character_generator(character_generator: u32) -> fonts::FontSelector {
+        match character_generator {
+            1 => { fonts::FontSelector::CG0 },
+            2 => { fonts::FontSelector::CG1 },
+            3 => { fonts::FontSelector::CG2 },
+            _ => { panic!("Invalid character generator selected"); },
+        }
+    }
+    pub fn update_cycles_per_keypress(&mut self, keyboard_ms_per_keypress: u32) {
+        self.cycles_per_keypress = (CPU_HZ * keyboard_ms_per_keypress) / 1000;
+        self.cycles_since_last   = 0;
     }
     pub fn emulate_cycles(&mut self, cycles_to_exec: u32, memory_system: &mut memory::MemorySystem) {
         let mut needed_cycles = cycles_to_exec;
@@ -113,6 +121,7 @@ impl Emulator {
         let mut last_frame_ns:   u32;
         let mut residual_ns:     u32;
         let mut frame_cycles:    u32;
+        let mut in_desktop_fsm:  bool;
 
         // Initialize SDL:
         let sdl = sdl2::init().expect(".expect() call: Failed to initialize SDL2");
@@ -148,6 +157,7 @@ impl Emulator {
             ns_per_frame = NS_PER_FRAME;
         }
         renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT).expect(".expect() call: Failed to set the SDL2 renderer's logical size");
+        in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
 
         startup_logger.log_message("Switching to the curses-based user interface.".to_owned());
         let mut user_interface = match user_interface::UserInterface::new() {
@@ -162,7 +172,7 @@ impl Emulator {
         user_interface.consume_startup_logger(startup_logger);
 
         // Generate textures for the screen glyphs:
-        let (narrow_glyphs, wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
+        let (mut narrow_glyphs, mut wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
 
         self.full_reset(memory_system);
         let stamp_now = time::get_time();
@@ -188,6 +198,35 @@ impl Emulator {
             user_interface.handle_user_input(self, memory_system, config_system);
             if self.exit_request { return true; }
 
+            if self.video_config_update {
+                let (red, green, blue) = config_system.config_items.video_bg_color;
+                let bg_color = Emulator::rgb888_into_rgb332(red, green, blue);
+
+                let (red, green, blue) = config_system.config_items.video_fg_color;
+                let fg_color = Emulator::rgb888_into_rgb332(red, green, blue);
+
+                let font = Emulator::font_for_character_generator(config_system.config_items.video_character_generator);
+                self.video_system.update_colors_and_font(bg_color, fg_color, font);
+
+                let (new_narrow_glyphs, new_wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
+                narrow_glyphs = new_narrow_glyphs;
+                wide_glyphs = new_wide_glyphs;
+
+                self.video_config_update = false;
+            }
+            if self.resolution_update {
+                if self.fullscreen && !in_desktop_fsm {
+                    let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen resolution");
+                    let (width, height) = config_system.config_items.video_fullscreen_resolution;
+                    window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
+                } else if !self.fullscreen {
+                    let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the windowed resolution");
+                    let (width, height) = config_system.config_items.video_windowed_resolution;
+                    window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
+                }
+                self.resolution_update = false;
+            }
+
             if self.powered_on && !self.paused {
                 self.emulate_cycles(frame_cycles, memory_system);
             }
@@ -199,7 +238,9 @@ impl Emulator {
                 let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen status");
                 match self.input_system.fullscreen_request {
                     true => {
-                        if !self.desktop_fullscreen {
+                        in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
+
+                        if !in_desktop_fsm {
                             let (width, height) = config_system.config_items.video_fullscreen_resolution;
                             window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to fullscreen");
                             window.set_fullscreen(sdl2::video::FullscreenType::True).expect(".expect() call: Failed to set the SDL2 window to true fullscreen");

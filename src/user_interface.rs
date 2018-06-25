@@ -726,7 +726,7 @@ impl UserInterface {
                 self.emulator_message("    show   <section>_<entry>           - shows the value of the given config entry.");
                 self.emulator_message("    change <section>_<entry> = <value> - changes the value of the given config entry.");
                 self.emulator_message("");
-                self.emulator_message("Invoking `config change' causes the configuration file to be updated, but closing and re-opening the emulator is required for most options to be applied correctly.");
+                self.emulator_message("Invoking `config change' causes the configuration file to be updated, as well as applying the change, if possible.  Some configuration changes (namely use of hardware accelerated rendering) may need the emulator to be closed and re-opened for the change to take effect.");
             },
             HelpEntry::Alias { alias_name, aliased_name, help_entry } => {
                 self.emulator_message(format!("The `{}' command is an alias for `{}', see `/help {}' for more information.", alias_name, aliased_name, help_entry).as_str());
@@ -1002,8 +1002,86 @@ impl UserInterface {
             },
             ConfigSubCommand::Change { entry_specifier, invocation_text } => {
                 match config_system.change_config_entry(&entry_specifier, &invocation_text) {
-                    Ok(()) => {
-                        self.emulator_message("Configuration updated.");
+                    Ok(apply_action) => {
+                        match apply_action {
+                            proj_config::ConfigChangeApplyAction::RomChange(which) => {
+                                if which == memory_system.rom_choice {
+                                    let was_running = emulator.powered_on;
+                                    if was_running {
+                                        emulator.power_off(memory_system);
+                                    }
+                                    memory_system.rom_chip.wipe();
+                                    memory_system.load_system_rom(config_system);
+                                    if was_running {
+                                        emulator.power_on(memory_system);
+                                    }
+                                    self.emulator_message("System rom changed.");
+                                } else {
+                                    self.emulator_message("Configuration updated.");
+                                }
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeRamSize => {
+                                memory_system.ram_chip.change_size(config_system.config_items.general_ram_size as u16);
+                                self.emulator_message("Ram size changed.");
+                            },
+                            proj_config::ConfigChangeApplyAction::UpdateMsPerKeypress => {
+                                emulator.update_cycles_per_keypress(config_system.config_items.keyboard_ms_per_keypress);
+                                self.emulator_message("Miliseconds per keypress setting updated.");
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeWindowedResolution => {
+                                if !emulator.fullscreen {
+                                    emulator.resolution_update = true;
+                                    self.emulator_message("Windowed mode resolution changed.");
+                                } else {
+                                    self.emulator_message("Configuration updated.");
+                                }
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeFullscreenResolution => {
+                                if emulator.fullscreen {
+                                    emulator.resolution_update = true;
+                                    self.emulator_message("Fullscreen mode resolution changed.");
+                                } else {
+                                    self.emulator_message("Configuration updated.");
+                                }
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeColor => {
+                                emulator.video_config_update = true;
+                                self.emulator_message("Color settings updated.");
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeHwAccelUsage => {
+                                if config_system.config_items.video_use_hw_accel {
+                                    self.emulator_message("Hardware acceleration enabled, although closing and re-opening the emulator is required for this change to take effect.");
+                                } else {
+                                    self.emulator_message("Hardware acceleration disabled, although closing and re-opening the emulator is required for this change to take effect.");
+                                }
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeCharacterGenerator => {
+                                emulator.video_config_update = true;
+                                self.emulator_message("Character generator changed.");
+                            },
+                            proj_config::ConfigChangeApplyAction::ChangeLowercaseModUsage => {
+                                memory_system.vid_mem.update_lowercase_mod(config_system.config_items.video_lowercase_mod);
+                                if config_system.config_items.video_lowercase_mod {
+                                    self.emulator_message("Lowercase mod enabled.");
+                                } else {
+                                    self.emulator_message("Lowercase mod disabled.");
+                                }
+                            },
+                            proj_config::ConfigChangeApplyAction::UpdateCassetteFilenames => {
+                                memory_system.cas_rec.update_cassette_paths(config_system);
+                                self.emulator_message("Cassette paths updated.");
+                            },
+                            proj_config::ConfigChangeApplyAction::UpdateCassetteFormats => {
+                                memory_system.cas_rec.update_cassette_formats(config_system);
+                                self.emulator_message("Cassette formats updated.");
+                            },
+                            proj_config::ConfigChangeApplyAction::Nothing => {
+                                self.emulator_message("Configuration updated.");
+                            },
+                            proj_config::ConfigChangeApplyAction::AlreadyUpToDate => {
+                                self.emulator_message("Nothing to change.");
+                            },
+                        }
                     },
                     Err(error) => {
                         self.emulator_message(format!("Failed to perform the requested configuration change: {}.", error).as_str());

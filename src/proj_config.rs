@@ -114,6 +114,15 @@ impl ConfigItems {
     }
 }
 
+// Information source.
+//
+// The point of this enum is to allow the use of configuration information both
+// from the configuration file, and from other parts of the program.
+//
+// The main distinction between the two source types, and the motivation for
+// introducing this enum, is to have descriptive error messages for both
+// use cases.
+//
 #[derive(Debug)]
 pub enum ConfigInfoSource {
     ConfigFile { line_number: usize, line_text: String },
@@ -140,7 +149,7 @@ impl ConfigInfoSource {
                 write!(f, "error on line {}, `{}', ", line_number + 1, line_text)
             },
             ConfigInfoSource::ExternalSource { ref section_name, ref entry_name, ref invocation_text } => {
-                write!(f, "invalid new value `{}' for the config entry `{}' of the [{}] section: ", retrieve_entry_assignee(invocation_text).as_str(), entry_name, section_name)
+                write!(f, "invalid new value `{}' for the config entry `{}' of the `[{}]' section: ", retrieve_entry_assignee(invocation_text).as_str(), entry_name, section_name)
             },
         }
     }
@@ -323,6 +332,28 @@ impl From<io::Error> for ConfigError {
     }
 }
 
+// Apply action.
+//
+// The following enum describes the actions that need to be taken in order for
+// the new value of an entry after doing a configuration change to be utilized.
+//
+#[derive(Debug, Copy, Clone)]
+pub enum ConfigChangeApplyAction {
+    RomChange(u32),
+    ChangeRamSize,
+    UpdateMsPerKeypress,
+    ChangeWindowedResolution,
+    ChangeFullscreenResolution,
+    ChangeColor,
+    ChangeHwAccelUsage,
+    ChangeCharacterGenerator,
+    ChangeLowercaseModUsage,
+    UpdateCassetteFilenames,
+    UpdateCassetteFormats,
+    Nothing,
+    AlreadyUpToDate,
+}
+
 // A configuration entry handler:
 struct ConfigEntry {
 
@@ -331,6 +362,9 @@ struct ConfigEntry {
 
     // The default text of the entry, including comments:
     default_text: Box<[String]>,
+
+    // The action to be performed to apply a change of the entry:
+    apply_action: ConfigChangeApplyAction,
 
     // Return an up-to-date version of the entry line, or none if already ok:
     update_line: fn(ConfigInfoSource, &mut ConfigItems) -> Option<String>,
@@ -736,7 +770,7 @@ impl ConfigSystem {
 
         Ok(entry_state_collection)
     }
-    pub fn change_config_entry(&mut self, entry_specifier: &str, invocation_text: &str) -> Result<(), ConfigError> {
+    pub fn change_config_entry(&mut self, entry_specifier: &str, invocation_text: &str) -> Result<ConfigChangeApplyAction, ConfigError> {
         let (requested_section, requested_entry) = try!(ConfigSystem::parse_entry_specifier(entry_specifier));
 
         for section_iter in 0..self.config_sections.len() {
@@ -764,11 +798,12 @@ impl ConfigSystem {
                             Some(updated_line) => {
                                 self.conf_file_lines[entry_loc] = updated_line;
                                 try!(self.write_config_file());
+                                return Ok(self.config_sections[section_iter].entries[entry_iter].apply_action);
                             },
                             None => {
+                                return Ok(ConfigChangeApplyAction::AlreadyUpToDate);
                             },
                         }
-                        return Ok(());
                     }
                 }
             }
@@ -870,7 +905,7 @@ fn check_config_dir<P: AsRef<path::Path>>(config_dir_in: P, startup_logger: &mut
 
 // Load the config file into a vector of strings representing lines:
 fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger: &mut util::StartupLogger)
-                   -> Result<Vec<String>, io::Error> {
+                   -> Result<Vec<String>, ConfigError> {
 
     let config_file_path = config_file_path_in.as_ref() as &path::Path;
     if config_file_path.exists() {
@@ -1317,6 +1352,7 @@ fn new_handler_general_level_1_rom() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "level_1_rom".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::RomChange(1),
         update_line:  update_line_general_level_1_rom,
         parse_entry:  parse_entry_general_level_1_rom,
     }
@@ -1329,6 +1365,7 @@ fn new_handler_general_level_2_rom() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "level_2_rom".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::RomChange(2),
         update_line:  update_line_general_level_2_rom,
         parse_entry:  parse_entry_general_level_2_rom,
     }
@@ -1342,6 +1379,7 @@ fn new_handler_general_misc_rom() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "misc_rom".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::RomChange(3),
         update_line:  update_line_general_misc_rom,
         parse_entry:  parse_entry_general_misc_rom,
     }
@@ -1359,6 +1397,7 @@ fn new_handler_general_default_rom() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "default_rom".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::Nothing,
         update_line:  update_line_general_default_rom,
         parse_entry:  parse_entry_general_default_rom,
     }
@@ -1380,6 +1419,7 @@ fn new_handler_general_ram_size() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "ram_size".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeRamSize,
         update_line:  update_line_general_ram_size,
         parse_entry:  parse_entry_general_ram_size,
     }
@@ -1447,6 +1487,7 @@ fn new_handler_keyboard_ms_per_keypress() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "ms_per_keypress".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::UpdateMsPerKeypress,
         update_line:  update_line_keyboard_ms_per_keypress,
         parse_entry:  parse_entry_keyboard_ms_per_keypress,
     }
@@ -1728,6 +1769,7 @@ fn new_handler_video_windowed_resolution() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "windowed_resolution".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeWindowedResolution,
         update_line:  update_line_video_windowed_resolution,
         parse_entry:  parse_entry_video_windowed_resolution,
     }
@@ -1740,6 +1782,7 @@ fn new_handler_video_fullscreen_resolution() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "fullscreen_resolution".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeFullscreenResolution,
         update_line:  update_line_video_fullscreen_resolution,
         parse_entry:  parse_entry_video_fullscreen_resolution,
     }
@@ -1758,6 +1801,7 @@ fn new_handler_video_bg_color() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "bg_color".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeColor,
         update_line:  update_line_video_bg_color,
         parse_entry:  parse_entry_video_bg_color,
     }
@@ -1771,6 +1815,7 @@ fn new_handler_video_fg_color() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "fg_color".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeColor,
         update_line:  update_line_video_fg_color,
         parse_entry:  parse_entry_video_fg_color,
     }
@@ -1791,6 +1836,7 @@ fn new_handler_video_desktop_fullscreen_mode() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "desktop_fullscreen_mode".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::Nothing,
         update_line:  update_line_video_desktop_fullscreen_mode,
         parse_entry:  parse_entry_video_desktop_fullscreen_mode,
     }
@@ -1815,6 +1861,7 @@ fn new_handler_video_use_hw_accel() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "use_hw_accel".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeHwAccelUsage,
         update_line:  update_line_video_use_hw_accel,
         parse_entry:  parse_entry_video_use_hw_accel,
     }
@@ -1860,6 +1907,7 @@ fn new_handler_video_character_generator() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "character_generator".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeCharacterGenerator,
         update_line:  update_line_video_character_generator,
         parse_entry:  parse_entry_video_character_generator,
     }
@@ -1883,6 +1931,7 @@ fn new_handler_video_lowercase_mod() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "lowercase_mod".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeLowercaseModUsage,
         update_line:  update_line_video_lowercase_mod,
         parse_entry:  parse_entry_video_lowercase_mod,
     }
@@ -1997,10 +2046,10 @@ fn update_line_cassette_output_cassette_format(info_source: ConfigInfoSource, co
         config_items.cassette_output_cassette_format = new_val;
         match new_val {
             cassette::Format::CAS => {
-                Some("input_cassette_format = CAS".to_owned())
+                Some("output_cassette_format = CAS".to_owned())
             },
             cassette::Format::CPT => {
-                Some("input_cassette_format = CPT".to_owned())
+                Some("output_cassette_format = CPT".to_owned())
             },
         }
     } else {
@@ -2077,6 +2126,7 @@ fn new_handler_cassette_input_cassette() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "input_cassette".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFilenames,
         update_line:  update_line_cassette_input_cassette,
         parse_entry:  parse_entry_cassette_input_cassette,
     }
@@ -2090,6 +2140,7 @@ fn new_handler_cassette_output_cassette() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "output_cassette".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFilenames,
         update_line:  update_line_cassette_output_cassette,
         parse_entry:  parse_entry_cassette_output_cassette,
     }
@@ -2121,6 +2172,7 @@ fn new_handler_cassette_input_cassette_format() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "input_cassette_format".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFormats,
         update_line:  update_line_cassette_input_cassette_format,
         parse_entry:  parse_entry_cassette_input_cassette_format,
     }
@@ -2134,6 +2186,7 @@ fn new_handler_cassette_output_cassette_format() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "output_cassette_format".to_owned(),
         default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFormats,
         update_line:  update_line_cassette_output_cassette_format,
         parse_entry:  parse_entry_cassette_output_cassette_format,
     }

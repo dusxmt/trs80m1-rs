@@ -97,6 +97,9 @@ impl VideoMemory {
 
         self.log_message("The video ram was cleared.".to_owned());
     }
+    pub fn update_lowercase_mod(&mut self, new_value: bool) {
+        self.lowercase_mod = new_value;
+    }
 }
 
 pub struct VideoSystem {
@@ -122,6 +125,15 @@ impl VideoSystem {
             logged_messages:   Vec::new(),
             messages_present:  false,
         }
+    }
+    pub fn update_colors_and_font(&mut self, bg_color: u8, fg_color: u8, font: fonts::FontSelector) {
+        self.bg_color = bg_color;
+        self.fg_color = fg_color;
+        self.font = match font {
+                        fonts::FontSelector::CG0 => fonts::FONT_CG0,
+                        fonts::FontSelector::CG1 => fonts::FONT_CG1,
+                        fonts::FontSelector::CG2 => fonts::FONT_CG2,
+                    };
     }
     // Generate textures for the screen tiles.
     pub fn generate_glyph_textures(&self, renderer: &mut sdl2::render::Renderer)

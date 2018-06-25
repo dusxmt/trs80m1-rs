@@ -122,6 +122,11 @@ impl RamChip {
         chip.log_message(create_report);
         chip
     }
+    pub fn change_size(&mut self, new_size: u16) {
+        let mut data_vec = self.data.clone().into_vec();
+        data_vec.resize(new_size as usize, self.default_value());
+        self.data = data_vec.into_boxed_slice();
+    }
 }
 
 impl MemIO for RamChip {
@@ -383,6 +388,8 @@ pub struct MemorySystem {
 
     pub cas_rec:  cassette::CassetteRecorder,
 
+    pub rom_choice: u32,
+
     // The interrupt request interface is a part of the memory system, to
     // allow any peripheral on the system bus to be able to issue an interrupt
     // request.  The following variables, when set to true, will request a
@@ -414,6 +421,7 @@ impl MemorySystem {
             rom_chip:          RomChip::new("system rom".to_owned(), ROM_SIZE, ROM_BASE),
             kbd_mem:           keyboard::KeyboardMemory::new(KBD_BASE),
             vid_mem:           video::VideoMemory::new(config_system.config_items.video_lowercase_mod, VID_BASE),
+            rom_choice:        selected_rom,
             cas_rec:           cas_rec,
             nmi_request:       false,
             int_request:       false,
@@ -424,8 +432,12 @@ impl MemorySystem {
             logged_messages:   Vec::new(),
             messages_present:  false,
         };
+        memory_system.load_system_rom(config_system);
 
-        let rom_choice = match selected_rom {
+        Some(memory_system)
+    }
+    pub fn load_system_rom(&mut self, config_system: &proj_config::ConfigSystem) {
+        let rom_choice = match self.rom_choice {
             1 => { config_system.config_items.general_level_1_rom.clone() },
             2 => { config_system.config_items.general_level_2_rom.clone() },
             3 => { config_system.config_items.general_misc_rom.clone() },
@@ -439,18 +451,16 @@ impl MemorySystem {
                 let mut rom_file_path = config_system.config_dir_path.clone();
                 rom_file_path.push(filename);
 
-                if !memory_system.rom_chip.load_from_file(&rom_file_path, 0) {
-                    memory_system.rom_chip.log_message("Loading the specified rom file failed, resorting to using the built-in dummy rom.".to_owned());
-                    memory_system.rom_chip.load_from_buffer(dummy_rom, "built-in dummy rom file", 0);
+                if !self.rom_chip.load_from_file(&rom_file_path, 0) {
+                    self.rom_chip.log_message("Loading the specified rom file failed, resorting to using the built-in dummy rom.".to_owned());
+                    self.rom_chip.load_from_buffer(dummy_rom, "built-in dummy rom file", 0);
                 }
             },
             None => {
-                memory_system.rom_chip.log_message("No system rom file specified, using a buit-in dummy.".to_owned());
-                memory_system.rom_chip.load_from_buffer(dummy_rom, "built-in dummy rom file", 0);
+                self.rom_chip.log_message("No system rom file specified, using a buit-in dummy.".to_owned());
+                self.rom_chip.load_from_buffer(dummy_rom, "built-in dummy rom file", 0);
             },
         }
-
-        Some(memory_system)
     }
 
     // External peripherals may detect reti instructions and use them to

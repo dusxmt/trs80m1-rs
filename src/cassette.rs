@@ -272,6 +272,28 @@ impl CassetteRecorder {
         recorder.log_message("Created the cassette recorder.".to_owned());
         Some(recorder)
     }
+    pub fn update_cassette_paths(&mut self, config_system: &proj_config::ConfigSystem) {
+        self.in_cas_path  = match config_system.config_items.cassette_input_cassette {
+                                Some(ref entry) => {
+                                    let mut path = config_system.config_dir_path.clone();
+                                    path.push(entry);
+                                    Some(path)
+                                },
+                                None => { None },
+                            };
+        self.out_cas_path = match config_system.config_items.cassette_output_cassette {
+                                Some(ref entry) => {
+                                    let mut path = config_system.config_dir_path.clone();
+                                    path.push(entry);
+                                    Some(path)
+                                },
+                                None => { None },
+                            };
+    }
+    pub fn update_cassette_formats(&mut self, config_system: &proj_config::ConfigSystem) {
+        self.in_format  = config_system.config_items.cassette_input_cassette_format;
+        self.out_format = config_system.config_items.cassette_output_cassette_format;
+    }
     pub fn power_off(&mut self) {
         let old_state = self.state;
         let old_motor = self.motor;
