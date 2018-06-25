@@ -46,11 +46,17 @@ consequence, any filenames specified in the curses-based user interface must
 consist of ascii-only characters.
 
 
-[ ] Make the emulator configurable via the curses-based user interface:
+[X] Make the emulator configurable via the curses-based user interface:
 
 This is mostly a continuation of the previous task, since while we now have
 an interactive, runtime user interface, it can not yet change configuration
 options.
+
+
+Comment:
+
+Changing the configuration is now possible using the `/config change' command.
+See `/help config' in the curses-based user interface for details.
 
 
 [ ] Add sound support:

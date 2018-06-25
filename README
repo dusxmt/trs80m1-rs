@@ -11,10 +11,13 @@ then decided to use to implement a machine, and I decided to go with the
 TRS-80 Model I, because of its simplicity.
 
 The emulator is not yet fully finished, it lacks many important features like
-sound, the expansion unit, the ability to change cassettes on-the-fly, but it
-is good enough to write programs in BASIC, to be able to save them, and to be
-able to play some classic games.  If you want a fully-featured emulator though,
-you're going to have to look somehwere else.
+sound, the expansion unit, the ability to record more than a single file onto
+a cassette and to seek and rewind it, but the emulator is good enough to write
+programs in BASIC, to be able to save them, and to be able to play some classic
+games.
+
+If you want a fully-featured emulator though, you're going to have to look
+somehwere else.
 
 
 If you would like to develop machine language programs for this base model
@@ -32,19 +35,24 @@ different points in the file, you have two separate files, one from which
 cassette data is read (input cassette), and one into which cassette data
 is written (output cassette).
 
-This choice was made since there currently isn't a way to change and seek
-cassettes on-the-fly, and so you can load from one cassette (always starts
-loading from the start - auto-rewind) and save onto another (deletes any
-previously existing data from the output cassette).
+This choice was made because cassette support was added before the emulator
+had a proper user interface, and is going to be changed in the near future.
+
+Currently, you can load from one cassette (always starts loading from the
+start - auto-rewind) and save onto another (deletes any previously existing
+data from the output cassette).
 
 
 The charactor generator fonts also originate from the xtrs emulator.
 
 
-There are plans to have interactive controls for the emulator, but for the
-time being, the current method of configuration is the configuration file,
-located at %APPDATA%\DusXMT\trs80m1-rs\config.ini on Microsoft Windows, and
-in ~/.trs80m1-rs/config.ini on UNIX-like systems.
+The emulator has a variety of settings which can be modified, the configuration
+file is located in %APPDATA%\DusXMT\trs80m1-rs\config.ini on Microsoft Windows,
+and in ~/.trs80m1-rs/config.ini on UNIX-like systems.  This file can be modified
+by hand with any text editor, but the settings can be listed and changed from
+within the emulator as well, using the `/config' command.  However, it is still
+advised to read the config file itself, since it contains detailed decriptions
+of the available options.
 
 
 You're going to need a system ROM image in order to use the emulator.
