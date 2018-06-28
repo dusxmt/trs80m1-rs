@@ -71,7 +71,7 @@ SDL has an audio interface which could be used for sound output, or another
 option would perhaps be the portaudio library.
 
 
-[ ] Improve cassette handling:
+[X] Improve cassette handling:
 
 Once the interactive user interface is implemented, it would be nice to change
 our cassette handling model to having a single cassette file, which we could

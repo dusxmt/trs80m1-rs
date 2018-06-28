@@ -11,10 +11,9 @@ then decided to use to implement a machine, and I decided to go with the
 TRS-80 Model I, because of its simplicity.
 
 The emulator is not yet fully finished, it lacks many important features like
-sound, the expansion unit, the ability to record more than a single file onto
-a cassette and to seek and rewind it, but the emulator is good enough to write
-programs in BASIC, to be able to save them, and to be able to play some classic
-games.
+sound, the expansion unit, or floppy drive support, but it is good enough to
+write programs in BASIC, to be able to save them, and to be able to play some
+classic games.
 
 If you want a fully-featured emulator though, you're going to have to look
 somehwere else.
@@ -29,18 +28,10 @@ https://github.com/dusxmt/trs80m1-mltl
 The cassette code is heavily based on that found in Tim Mann's xtrs emulator,
 http://www.tim-mann.org/xtrs.html
 
-It does however currently deviate from that emulator's cassette handling,
-instead of having a single cassette file which you can rewind and seek to
-different points in the file, you have two separate files, one from which
-cassette data is read (input cassette), and one into which cassette data
-is written (output cassette).
-
-This choice was made because cassette support was added before the emulator
-had a proper user interface, and is going to be changed in the near future.
-
-Currently, you can load from one cassette (always starts loading from the
-start - auto-rewind) and save onto another (deletes any previously existing
-data from the output cassette).
+Cassettes can be changed, rewound (to the beginning, or to arbitrary locations),
+erased, and created in the curses-based user interface, with the `/cassette'
+command.  The location, format, and position of the cassette is stored in the
+configuration file.  Currently supported cassette formats are CAS and CPT.
 
 
 The charactor generator fonts also originate from the xtrs emulator.
