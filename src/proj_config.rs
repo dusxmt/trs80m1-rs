@@ -372,8 +372,9 @@ struct ConfigEntry {
 
 // Representation of a section:
 struct ConfigSection {
-    section_name: String,
-    entries:      Box<[ConfigEntry]>,
+    section_name:      String,
+    entries:           Box<[ConfigEntry]>,
+    obsolete_entries:  Box<[String]>,
 }
 
 // The configuration system structure:
@@ -442,6 +443,7 @@ impl ConfigSystem {
                                 },
                             }
 
+                            let _ = new_system.check_obsolete_entries(&new_system.config_file_path, startup_logger);
                             Some(new_system)
                         },
                         Err(error) => {
@@ -660,6 +662,27 @@ impl ConfigSystem {
         } else {
             Ok(None)
         }
+    }
+    fn check_obsolete_entries(&self, config_file_path: &path::Path, startup_logger: &mut util::StartupLogger) -> Result<(), ConfigError> {
+
+        for section_iter in 0..self.config_sections.len() {
+
+            match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+                Some((start_index, end_index)) => {
+                    for entry_iter in 0..self.config_sections[section_iter].obsolete_entries.len() {
+
+                        match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].obsolete_entries[entry_iter], start_index, end_index)) {
+                            Some(loc) => {
+                                startup_logger.log_message(format!("Note: The entry `{}' of the `[{}]' section at line {} of `{}' is from an older version of the emulator and is no longer used, it can be safely removed from the configuration file.", self.config_sections[section_iter].obsolete_entries[entry_iter], self.config_sections[section_iter].section_name, loc + 1, config_file_path.display()));
+                            },
+                            None => { },
+                        }
+                    }
+                },
+                None => { }
+            };
+        }
+        Ok(())
     }
     fn write_config_file(&self) -> Result<(), ConfigError> {
 
@@ -1431,9 +1454,12 @@ fn new_general_section() -> ConfigSection {
     entries.push(new_handler_general_default_rom());
     entries.push(new_handler_general_ram_size());
 
+    let obsolete_entries: Vec<String> = Vec::new();
+
     ConfigSection {
-        section_name: "General".to_owned(),
-        entries:      entries.into_boxed_slice(),
+        section_name:     "General".to_owned(),
+        entries:          entries.into_boxed_slice(),
+        obsolete_entries: obsolete_entries.into_boxed_slice(),
     }
 }
 
@@ -1494,9 +1520,12 @@ fn new_keyboard_section() -> ConfigSection {
     let mut entries: Vec<ConfigEntry> = Vec::new();
     entries.push(new_handler_keyboard_ms_per_keypress());
 
+    let obsolete_entries: Vec<String> = Vec::new();
+
     ConfigSection {
-        section_name: "Keyboard".to_owned(),
-        entries:      entries.into_boxed_slice(),
+        section_name:     "Keyboard".to_owned(),
+        entries:          entries.into_boxed_slice(),
+        obsolete_entries: obsolete_entries.into_boxed_slice(),
     }
 }
 
@@ -1946,9 +1975,12 @@ fn new_video_section() -> ConfigSection {
     entries.push(new_handler_video_character_generator());
     entries.push(new_handler_video_lowercase_mod());
 
+    let obsolete_entries: Vec<String> = Vec::new();
+
     ConfigSection {
-        section_name: "Video".to_owned(),
-        entries:      entries.into_boxed_slice(),
+        section_name:     "Video".to_owned(),
+        entries:          entries.into_boxed_slice(),
+        obsolete_entries: obsolete_entries.into_boxed_slice(),
     }
 }
 
@@ -2058,6 +2090,7 @@ fn parse_entry_cassette_file_offset(info_source: ConfigInfoSource, config_items:
 fn new_handler_cassette_file() -> ConfigEntry {
     let mut default_text: Vec<String> = Vec::new();
 
+    default_text.push("".to_owned());
     default_text.push("; The name of the cassette file currently in the tape drive.".to_owned());
     default_text.push(";".to_owned());
     default_text.push("; You can either specify a full path to a cassette file, a simple file name".to_owned());
@@ -2081,6 +2114,7 @@ fn new_handler_cassette_file() -> ConfigEntry {
 fn new_handler_cassette_file_format() -> ConfigEntry {
     let mut default_text: Vec<String> = Vec::new();
 
+    default_text.push("".to_owned());
     default_text.push("; Cassette file format selection (CAS or CPT):".to_owned());
     default_text.push(";".to_owned());
     default_text.push("; Currently, the emulator supports two cassette file formats:".to_owned());
@@ -2113,6 +2147,7 @@ fn new_handler_cassette_file_format() -> ConfigEntry {
 fn new_handler_cassette_file_offset() -> ConfigEntry {
     let mut default_text: Vec<String> = Vec::new();
 
+    default_text.push("".to_owned());
     default_text.push("; Current byte offset into the cassette.".to_owned());
     default_text.push(";".to_owned());
     default_text.push("; This value indicates how far the cassette is currently wound past the".to_owned());
@@ -2148,8 +2183,16 @@ fn new_cassette_section() -> ConfigSection {
     entries.push(new_handler_cassette_file_format());
     entries.push(new_handler_cassette_file_offset());
 
+    let mut obsolete_entries: Vec<String> = Vec::new();
+
+    obsolete_entries.push("input_cassette".to_owned());
+    obsolete_entries.push("output_cassette".to_owned());
+    obsolete_entries.push("input_cassette_format".to_owned());
+    obsolete_entries.push("output_cassette_format".to_owned());
+
     ConfigSection {
-        section_name: "Cassette".to_owned(),
-        entries:      entries.into_boxed_slice(),
+        section_name:    "Cassette".to_owned(),
+        entries:          entries.into_boxed_slice(),
+        obsolete_entries: obsolete_entries.into_boxed_slice(),
     }
 }
