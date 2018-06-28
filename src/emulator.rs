@@ -227,6 +227,9 @@ impl Emulator {
                 self.resolution_update = false;
             }
 
+            if memory_system.cas_rec.config_update_request {
+                memory_system.cas_rec.handle_config_update_request(config_system);
+            }
             if self.powered_on && !self.paused {
                 self.emulate_cycles(frame_cycles, memory_system);
             }

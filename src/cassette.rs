@@ -127,14 +127,14 @@ const   ST_250THRESH:  f32   = 2500.0; // us threshold between 0 and 1
 
 
 pub struct CassetteRecorder {
-    in_cas_path:     Option<path::PathBuf>,
-    out_cas_path:    Option<path::PathBuf>,
-    in_format:       Format,
-    out_format:      Format,
+    pub config_update_request: bool,
+
     state:           State,
     motor:           bool,
+    cas_path:        Option<path::PathBuf>,
     io_buffer:       Option<Vec<u8>>,
     io_buffer_iter:  usize,
+    data_format:     Format,
     avg:             f32,
     env:             f32,
     noise_floor:     i32,
@@ -220,29 +220,16 @@ impl memory::PeripheralIO for CassetteRecorder {
 
 impl CassetteRecorder {
     pub fn new(config_system: &proj_config::ConfigSystem, _startup_logger: &mut util::StartupLogger) -> Option<CassetteRecorder> {
+
         let mut recorder = CassetteRecorder {
-                               in_cas_path:     match config_system.config_items.cassette_input_cassette {
-                                                    Some(ref entry) => {
-                                                        let mut path = config_system.config_dir_path.clone();
-                                                        path.push(entry);
-                                                        Some(path)
-                                                    },
-                                                    None => { None },
-                                                },
-                               out_cas_path:    match config_system.config_items.cassette_output_cassette {
-                                                    Some(ref entry) => {
-                                                        let mut path = config_system.config_dir_path.clone();
-                                                        path.push(entry);
-                                                        Some(path)
-                                                    },
-                                                    None => { None },
-                                                },
-                               in_format:       config_system.config_items.cassette_input_cassette_format,
-                               out_format:      config_system.config_items.cassette_output_cassette_format,
+                               config_update_request: false,
+
                                state:           State::Close,
                                motor:           false,
+                               cas_path:        None,
                                io_buffer:       None,
-                               io_buffer_iter:  0,
+                               io_buffer_iter:  config_system.config_items.cassette_file_offset,
+                               data_format:     config_system.config_items.cassette_file_format,
                                avg:             0.0,
                                env:             0.0,
                                noise_floor:     0,
@@ -268,31 +255,107 @@ impl CassetteRecorder {
                                logged_messages:  Vec::new(),
                                messages_present: false,
                            };
-
+        recorder.reload_cassette_file(config_system);
         recorder.log_message("Created the cassette recorder.".to_owned());
+
         Some(recorder)
     }
-    pub fn update_cassette_paths(&mut self, config_system: &proj_config::ConfigSystem) {
-        self.in_cas_path  = match config_system.config_items.cassette_input_cassette {
-                                Some(ref entry) => {
-                                    let mut path = config_system.config_dir_path.clone();
-                                    path.push(entry);
-                                    Some(path)
-                                },
-                                None => { None },
-                            };
-        self.out_cas_path = match config_system.config_items.cassette_output_cassette {
-                                Some(ref entry) => {
-                                    let mut path = config_system.config_dir_path.clone();
-                                    path.push(entry);
-                                    Some(path)
-                                },
-                                None => { None },
-                            };
+    pub fn reload_cassette_file(&mut self, config_system: &proj_config::ConfigSystem) {
+        let (buffer, path) = match config_system.config_items.cassette_file {
+                                 Some(ref entry) => {
+                                     let mut path = config_system.config_dir_path.clone();
+                                     path.push(entry);
+
+                                     if path.exists() {
+                                         match fs::File::open(&path) {
+                                             Ok(mut file) => {
+                                                 let mut buffer = Vec::new();
+                                                 match file.read_to_end(&mut buffer) {
+                                                     Ok(_) => {
+                                                         self.log_message(format!("The cassette file `{}' was loaded into memory.", path.display()));
+
+                                                         (Some(buffer), Some(path))
+                                                     },
+                                                     Err(error) => {
+                                                         self.log_message(format!("Failed to load `{}' into memory: {}.", path.display(), error));
+
+                                                         (None, None)
+                                                     },
+                                                 }
+                                             },
+                                             Err(error) => {
+                                                 self.log_message(format!("Couldn't open `{}' for reading: {}.", path.display(), error));
+
+                                                 (None, None)
+                                             },
+                                         }
+                                     } else {
+                                         self.log_message(format!("Couldn't find `{}', creating...", path.display()));
+                                         match fs::File::create(&path) {
+                                             Ok(..) => {
+                                                 self.log_message(format!("Successfully created `{}'.", path.display()));
+
+                                                 (Some(Vec::new()), Some(path))
+                                             }
+                                             Err(error) => {
+                                                 self.log_message(format!("Failed to create `{}': {}.", path.display(), error));
+
+                                                 (None, None)
+                                             }
+                                         }
+                                     }
+                                 },
+                                 None => {
+                                     (None, None)
+                                 },
+                             };
+
+        self.io_buffer = buffer;
+        self.cas_path  = path;
     }
-    pub fn update_cassette_formats(&mut self, config_system: &proj_config::ConfigSystem) {
-        self.in_format  = config_system.config_items.cassette_input_cassette_format;
-        self.out_format = config_system.config_items.cassette_output_cassette_format;
+    pub fn change_cassette_data_format(&mut self, config_system: &proj_config::ConfigSystem) {
+        self.data_format = config_system.config_items.cassette_file_format;
+    }
+    pub fn update_cassette_file_offset(&mut self, config_system: &proj_config::ConfigSystem) {
+        self.io_buffer_iter = config_system.config_items.cassette_file_offset;
+    }
+    pub fn erase_cassette(&mut self) {
+        let message = match self.io_buffer {
+            Some(ref mut buffer) => {
+                buffer.clear();
+                self.io_buffer_iter = 0;
+                self.config_update_request = true;
+
+                let path = match self.cas_path {
+                    Some(ref path) => { path.clone() },
+                    None => {
+                        panic!("If a cassette is loaded, its path needs to be available; path missing.");
+                    },
+                };
+                match fs::File::create(&path) {
+                    Ok(..) => {
+                        "Cassette data erased.".to_owned()
+                    }
+                    Err(error) => {
+                        format!("Failed to overwrite `{}' with an empty file: {}.", path.display(), error)
+                    }
+                }
+            },
+            None => {
+                "No cassette in tape drive, nothing to erase.".to_owned()
+            },
+        };
+        self.log_message(message);
+    }
+    pub fn handle_config_update_request(&mut self, config_system: &mut proj_config::ConfigSystem) {
+        match config_system.change_config_entry("cassette_file_offset", format!("= {}", self.io_buffer_iter).as_str()) {
+            Err(error) => {
+                self.log_message(format!("Failed to update the current cassette file offset: {}.", error));
+            },
+            Ok(..) => { },
+        }
+
+        self.config_update_request = false;
     }
     pub fn power_off(&mut self) {
         let old_state = self.state;
@@ -300,8 +363,6 @@ impl CassetteRecorder {
 
         self.state            = State::Close;
         self.motor            = false;
-        self.io_buffer        = None;
-        self.io_buffer_iter   = 0;
 
         self.avg              = 0.0;
         self.env              = 0.0;
@@ -324,6 +385,7 @@ impl CassetteRecorder {
         self.cas_bit_num      = 0;
 
         if old_motor {
+            self.config_update_request = true;
             self.log_message("The cassette drive's motor was stopped.".to_owned());
         }
         if old_state != State::Close {
@@ -363,10 +425,39 @@ impl CassetteRecorder {
                     }
                     self.assert_state(State::Close);
                     self.motor = false;
+                    self.config_update_request = true;
                     self.log_message("The cassette drive's motor was stopped.".to_owned());
                 },
             }
         }
+    }
+    fn record_byte(&mut self, to_write: u8) {
+        match self.io_buffer {
+            Some(ref mut buffer) => {
+                if self.io_buffer_iter >= buffer.len() {
+                    buffer.resize(self.io_buffer_iter + 1, 0);
+                }
+                buffer[self.io_buffer_iter] = to_write;
+            },
+            None => { },
+        };
+
+        self.io_buffer_iter += 1;
+    }
+    fn retrieve_byte(&mut self) -> u8 {
+        let retval = match self.io_buffer {
+                         Some(ref mut buffer) => {
+                             if self.io_buffer_iter < buffer.len() {
+                                 buffer[self.io_buffer_iter]
+                             } else {
+                                 0
+                             }
+                         },
+                         None => { 0 },
+                     };
+
+        self.io_buffer_iter += 1;
+        retval
     }
     // Return value: 1 = already that state; 0 = state changed; -1 = failed.
     fn assert_state(&mut self, new_state: State) -> i32 {
@@ -377,76 +468,44 @@ impl CassetteRecorder {
         } else {
             match new_state {
                 State::Read => {
-                    match self.in_cas_path.clone() {
-                        Some(ref path) => {
-                            let mut file = match fs::File::open(path) {
-                                Ok(file) => { file },
-                                Err(error) => {
-                                    self.log_message(format!("Couldn't open `{}\' for reading: {}.", path.display(), error));
-                                    self.state = State::Failed;
-                                    return -1;
-                                },
-                            };
-                            let mut buffer = Vec::new();
-                            match file.read_to_end(&mut buffer) {
-                                Ok(_) => { () },
-                                Err(error) => {
-                                    self.log_message(format!("Failed to load `{}\' into memory: {}.", path.display(), error));
-                                    self.state = State::Failed;
-                                    return -1;
-                                },
-                            };
-                            self.io_buffer = Some(buffer);
-                            self.io_buffer_iter = 0;
-                            let message = format!("The cassette file `{}\' was loaded into memory.", path.display());
-                            self.log_message(message);
-                        },
-                        None => {
-                            self.log_message("Warning: no input cassette specified in the config file.".to_owned());
-                            self.io_buffer = Some(Vec::new());
-                            self.io_buffer_iter = 0;
-                        },
-                    };
                 },
                 State::Write => {
-                    self.io_buffer = Some(Vec::new());
                 },
                 State::Close => {
                     if self.state == State::Write {
-                        let buffer = match self.io_buffer {
-                            Some(ref buffer) => { buffer.clone() },
-                            None => {
-                                panic!("No io_buffer present in the cassette mechanism after finishing a write");
-                            },
-                        };
-                        match self.out_cas_path.clone() {
-                            Some(ref path) => {
-                                match fs::File::create(path) {
-                                    Ok(mut file) => {
-                                        match file.write_all(&buffer) {
-                                            Ok(()) => {
-                                                self.log_message(format!("Saved the recorded cassette into `{}\'.",
-                                                    path.display())); 
+                        let message = match self.io_buffer {
+                            Some(ref buffer) => {
+                                match self.cas_path.clone() {
+                                    Some(path) => {
+                                        match fs::File::create(&path) {
+                                            Ok(mut file) => {
+                                                match file.write_all(&buffer) {
+                                                    Ok(()) => {
+                                                        format!("Saved the recorded cassette into `{}'.", path.display())
+                                                    },
+                                                    Err(error) => {
+                                                        format!("Failed to write the newly created tape into `{}': {}.", path.display(), error)
+                                                    },
+                                                }
                                             },
                                             Err(error) => {
-                                                self.log_message(format!("Failed to write the newly created tape into `{}\': {}.", path.display(), error));
+                                                format!("Failed to write the newly created tape into `{}': Couldn't open `{}' for writing: {}.", path.display(), path.display(), error)
                                             },
-                                        };
+                                        }
                                     },
-                                    Err(error) => {
-                                        self.log_message(format!("Failed to write the newly created tape into `{}\': Couldn't open `{}\' for writing: {}.", path.display(), path.display(), error));
+                                    None => {
+                                        panic!("The path for the loaded cassette is missing.");
                                     },
-                                };
+                                }
                             },
                             None => {
-                                self.log_message("Warning: no output cassette specified in the config file, discarding the recorded data.".to_owned());
+                                "Note: Your recording wasn't saved, since there's no cassette in the tape recorder.".to_owned()
                             },
                         };
+                        self.log_message(message);
                     }
-                    self.io_buffer = None;
                 },
                 State::Failed => {
-                    self.io_buffer = None;
                 },
             }
             self.state = new_state;
@@ -465,16 +524,11 @@ impl CassetteRecorder {
         }
         let ddelta_us: f32 = (cycle_timestamp.wrapping_sub(self.transition) as f32) / CPU_MHZ - self.roundoff_error;
 
-        match self.out_format {
+        match self.data_format {
             Format::CAS => {
                 if (value_in == Flush) && (self.cas_bit_num != 0) {
-                    let buffer = match self.io_buffer {
-                        Some(ref mut buffer) => { buffer },
-                        None => {
-                            panic!("No io_buffer present in the cassette mechanism during a write");
-                        },
-                    };
-                    buffer.push(self.cas_byte as u8);
+                    let to_rec = self.cas_byte as u8;
+                    self.record_byte(to_rec);
                     self.cas_byte = 0;
                 } else {
                     let mut sample: u8 = 2; // i.e., no bit.
@@ -552,25 +606,14 @@ impl CassetteRecorder {
                         }
                         self.cas_byte |= (sample << self.cas_bit_num) as i32;
                         if self.cas_bit_num == 0 {
-                            let buffer = match self.io_buffer {
-                                Some(ref mut buffer) => { buffer },
-                                None => {
-                                    panic!("No io_buffer present in the cassette mechanism during a write");
-                                },
-                            };
-                            buffer.push(self.cas_byte as u8);
+                            let to_rec = self.cas_byte as u8;
+                            self.record_byte(to_rec);
                             self.cas_byte = 0;
                         }
                     }
                 }
             },
             Format::CPT => {
-                let buffer = match self.io_buffer {
-                    Some(ref mut buffer) => { buffer },
-                    None => {
-                        panic!("No io_buffer present in the cassette mechanism during a write");
-                    },
-                };
                 let value = match value_in {
                     Value(value) => { value as u8 },
                     Flush => { self.value as u8 },
@@ -586,8 +629,8 @@ impl CassetteRecorder {
                     // little-endian order.
 
                     let code = (value as u32) | (delta_us << 2);
-                    buffer.push(((code >> 0) & 0xFF) as u8);
-                    buffer.push(((code >> 8) & 0xFF) as u8);
+                    self.record_byte(((code >> 0) & 0xFF) as u8);
+                    self.record_byte(((code >> 8) & 0xFF) as u8);
 
                 } else {
                     // Otherwise write a 0xffff escape code and encode
@@ -596,13 +639,13 @@ impl CassetteRecorder {
                     // 1-byte value, then 4-byte delta_us in little-endian
                     // order.
 
-                    buffer.push(0xFF);
-                    buffer.push(0xFF);
-                    buffer.push(value);
-                    buffer.push(((delta_us >>  0) & 0xFF) as u8);
-                    buffer.push(((delta_us >>  8) & 0xFF) as u8);
-                    buffer.push(((delta_us >> 16) & 0xFF) as u8);
-                    buffer.push(((delta_us >> 24) & 0xFF) as u8);
+                    self.record_byte(0xFF);
+                    self.record_byte(0xFF);
+                    self.record_byte(value);
+                    self.record_byte(((delta_us >>  0) & 0xFF) as u8);
+                    self.record_byte(((delta_us >>  8) & 0xFF) as u8);
+                    self.record_byte(((delta_us >> 16) & 0xFF) as u8);
+                    self.record_byte(((delta_us >> 24) & 0xFF) as u8);
                 }
             },
         };
@@ -614,40 +657,15 @@ impl CassetteRecorder {
         }
     }
     // Read a new transition, updating self.next and self.delta.
-    // If input fails (perhaps due to eof), return 0, otherwise 1.
-    //
-    // Set self.delta to 0xFFFFFFFF on failure.
-    //
-    fn transition_in(&mut self) -> i32 {
-        let ret: i32;
+    fn transition_in(&mut self) {
 
-        match self.in_format {
+        match self.data_format {
             Format::CAS => {
                 if self.cas_pulse_state == 0 {
                     self.cas_bit_num -= 1;
                 }
                 if self.cas_bit_num < 0 {
-                    let buffer = match self.io_buffer {
-                        Some(ref buffer) => { buffer },
-                        None => {
-                            panic!("No io_buffer present in the cassette mechanism during a read");
-                        },
-                    };
-                    let in_byte: i32;
-                    if self.io_buffer_iter < buffer.len() {
-                        in_byte = buffer[self.io_buffer_iter] as i32;
-                        self.io_buffer_iter += 1;
-                    } else {
-                        // Add one extra zero byte to work around an apparent
-                        // bug in the Vavasour Model I emulator's .CAS files.
-                        if self.cas_byte != 0x100 {
-                            in_byte = 0x100;
-                        } else {
-                            self.delta = 0xFFFFFFFF;
-                            return 0;
-                        }
-                    }
-                    self.cas_byte = in_byte;
+                    self.cas_byte = self.retrieve_byte() as i32;
                     self.cas_bit_num = 7;
                 }
                 let current_bit = (self.cas_byte >> self.cas_bit_num) & 1;
@@ -713,56 +731,33 @@ impl CassetteRecorder {
                 let delta_ts = (delta_us as f32) * CPU_MHZ - self.roundoff_error;
                 self.delta = (delta_ts + 0.5) as u32;
                 self.roundoff_error = (self.delta as f32) - delta_ts;
-
-                ret = 1;
             },
             Format::CPT => {
-                let buffer = match self.io_buffer {
-                    Some(ref buffer) => { buffer },
-                    None => {
-                        panic!("No io_buffer present in the cassette mechanism during a read");
-                    },
-                };
-                if (self.io_buffer_iter + 1) < buffer.len() {
-                    let low: u8 = buffer[self.io_buffer_iter];
-                    let high: u8 = buffer[self.io_buffer_iter + 1];
-                    self.io_buffer_iter += 2;
+                let low: u8 = self.retrieve_byte();
+                let high: u8 = self.retrieve_byte();
 
-                    let code: u16 = ((high as u16) << 8) | (low as u16);
-                    let delta_us: u32;
-                    if code == 0xFFFF {
-                        if (self.io_buffer_iter + 4) < buffer.len() {
-                            self.next = buffer[self.io_buffer_iter] as i32;
-                            let d_lsb: u8 = buffer[self.io_buffer_iter + 1];
-                            let d_3rd: u8 = buffer[self.io_buffer_iter + 2];
-                            let d_2nd: u8 = buffer[self.io_buffer_iter + 3];
-                            let d_msb: u8 = buffer[self.io_buffer_iter + 4];
+                let code: u16 = ((high as u16) << 8) | (low as u16);
+                let delta_us: u32;
+                if code == 0xFFFF {
+                    self.next = self.retrieve_byte() as i32;
+                    let d_lsb: u8 = self.retrieve_byte();
+                    let d_3rd: u8 = self.retrieve_byte();
+                    let d_2nd: u8 = self.retrieve_byte();
+                    let d_msb: u8 = self.retrieve_byte();
 
-                            self.io_buffer_iter += 5;
-
-                            delta_us = ((d_msb as u32) << 24)
-                                     | ((d_2nd as u32) << 16)
-                                     | ((d_3rd as u32) <<  8)
-                                     | ((d_lsb as u32) <<  0);
-                        } else {
-                            self.delta = 0xFFFFFFFF;
-                            return 0;
-                        }
-                    } else {
-                        self.next = (code & 3) as i32;
-                        delta_us = (code >> 2) as u32;
-                    }
-                    let delta_ts: f32 = (delta_us as f32) * CPU_MHZ - self.roundoff_error;
-                    self.delta = (delta_ts + 0.5) as u32;
-                    self.roundoff_error = (self.delta as f32) - delta_ts;
-                    ret = 1;
+                    delta_us = ((d_msb as u32) << 24)
+                             | ((d_2nd as u32) << 16)
+                             | ((d_3rd as u32) <<  8)
+                             | ((d_lsb as u32) <<  0);
                 } else {
-                    self.delta = 0xFFFFFFFF;
-                    return 0;
+                    self.next = (code & 3) as i32;
+                    delta_us = (code >> 2) as u32;
                 }
+                let delta_ts: f32 = (delta_us as f32) * CPU_MHZ - self.roundoff_error;
+                self.delta = (delta_ts + 0.5) as u32;
+                self.roundoff_error = (self.delta as f32) - delta_ts;
             },
         }
-        ret
     }
     fn update(&mut self, cycle_timestamp: u32) {
         if self.motor && (self.state != State::Write) &&

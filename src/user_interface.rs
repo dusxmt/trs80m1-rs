@@ -20,6 +20,7 @@ use std::io::Write;
 use std::panic;
 use std::path;
 
+use cassette;
 use emulator;
 use memory;
 use memory::MemoryChipOps;
@@ -89,6 +90,7 @@ enum HelpEntry {
     Messages,
     Machine,
     Memory,
+    Cassette,
     Config,
     Exit,
     Alias { alias_name: String, aliased_name: String, help_entry: String },
@@ -136,6 +138,13 @@ enum MemorySubCommand {
     Wipe { device: MemorySubCommandArgInclusive },
 }
 
+enum CassetteSubCommand {
+    Insert { format: cassette::Format, file: String },
+    Eject,
+    Erase,
+    Seek   { position: usize },
+    Rewind,
+}
 
 enum ConfigSubCommand {
     List,
@@ -148,6 +157,7 @@ enum ParsedUserCommand {
     Messages (MessagesSubCommand),
     Machine  (MachineSubCommand),
     Memory   (MemorySubCommand),
+    Cassette (CassetteSubCommand),
     Config   (ConfigSubCommand),
 
     CommandMissingParameter  { sup_command_name: String, sub_command_name: String, parameter_desc: String, parameter_desc_ia: String },
@@ -191,6 +201,8 @@ impl ParsedUserCommand {
                         ParsedUserCommand::Help(HelpEntry::Machine)
                     } else if sub_command == "memory" {
                         ParsedUserCommand::Help(HelpEntry::Memory)
+                    } else if sub_command == "cassette" {
+                        ParsedUserCommand::Help(HelpEntry::Cassette)
                     } else if sub_command == "config" {
                         ParsedUserCommand::Help(HelpEntry::Config)
                     } else if sub_command == "exit" || sub_command == "quit" {
@@ -388,6 +400,60 @@ impl ParsedUserCommand {
                             return ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: device_str_raw, parameter_desc: "device".to_owned() };
                         };
                         ParsedUserCommand::Memory(MemorySubCommand::Wipe { device: device })
+                    } else {
+                        ParsedUserCommand::InvalidSubCommand { sup_command_name: command, sub_command_name: sub_command_raw }
+                    }
+                },
+                None => {
+                    ParsedUserCommand::CommandMissingSubcommand { sup_command_name: command }
+                },
+            }
+        } else if command == "cassette" {
+            match sub_command {
+                Some((sub_command, sub_command_raw)) => {
+                    if sub_command == "insert" {
+                        let (format_str, format_str_raw) = match parameter_1 {
+                                                               Some((parameter_1, parameter_1_raw)) => { (parameter_1, parameter_1_raw) },
+                                                               None => {
+                                                                   return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "format".to_owned(), parameter_desc_ia: "a".to_owned() };
+                                                               },
+                                                           };
+                        let format = if format_str == "cas" {
+                            cassette::Format::CAS
+                        } else if format_str == "cpt" {
+                            cassette::Format::CPT
+                        } else {
+                            return ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: format_str_raw, parameter_desc: "format".to_owned() };
+                        };
+                        match util::get_starting_at_word(command_string, 4) {
+                            Some(file) => {
+                                ParsedUserCommand::Cassette(CassetteSubCommand::Insert { format: format, file: file })
+                            },
+                            None => {
+                                ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "file".to_owned(), parameter_desc_ia: "a".to_owned() }
+                            },
+                        }
+                    } else if sub_command == "seek" {
+                        let position_str = match parameter_1 {
+                                               Some((_, parameter_1_raw)) => { parameter_1_raw },
+                                               None => {
+                                                   return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "position".to_owned(), parameter_desc_ia: "a".to_owned() };
+                                               },
+                                           };
+                        match position_str.parse::<usize>() {
+                            Ok(position) => {
+                                ParsedUserCommand::Cassette(CassetteSubCommand::Seek { position: position })
+                            },
+                            Err(_) => {
+                                ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: position_str, parameter_desc: "position".to_owned() }
+                            },
+                        }
+                    } else if sub_command == "eject" {
+                        ParsedUserCommand::Cassette(CassetteSubCommand::Eject)
+                    } else if sub_command == "erase" {
+                        ParsedUserCommand::Cassette(CassetteSubCommand::Erase)
+                    } else if sub_command == "rewind" {
+                        ParsedUserCommand::Cassette(CassetteSubCommand::Rewind)
                     } else {
                         ParsedUserCommand::InvalidSubCommand { sup_command_name: command, sub_command_name: sub_command_raw }
                     }
@@ -636,6 +702,9 @@ impl UserInterface {
             ParsedUserCommand::Memory(sub_command) => {
                 self.execute_memory_subcommand(sub_command, memory_system);
             },
+            ParsedUserCommand::Cassette(sub_command) => {
+                self.execute_cassette_subcommand(sub_command, memory_system, config_system);
+            },
             ParsedUserCommand::Config(sub_command) => {
                 self.execute_config_subcommand(sub_command, emulator, memory_system, config_system);
             },
@@ -673,6 +742,7 @@ impl UserInterface {
                 self.emulator_message("    messages    - manages the messages on the curses-based interface.");
                 self.emulator_message("    machine     - allows you to change the state of the emulated machine.");
                 self.emulator_message("    memory      - allows you to change the state of the memory system.");
+                self.emulator_message("    cassette    - allows you to change the state of the cassette drive.");
                 self.emulator_message("    config      - allows you to change configuration settings.");
                 self.emulator_message("");
                 self.emulator_message("    F1          - alias for `help', pressing F1 shows this message.");
@@ -718,6 +788,21 @@ impl UserInterface {
                 self.emulator_message("The offset specifier in `memory load' can be in either decimal, octal, binary or hexadecimal notation.  The default is decimal, a prefix of 0b means binary, 0x means hexadecimal, 0 means octal, and a postfix of h means hexadecimal.");
                 self.emulator_message("");
                 self.emulator_message("In the current implementation, file names may not contain spaces and non-ascii characters.");
+            },
+            HelpEntry::Cassette => {
+                self.emulator_message("The `cassette' command has the following sub-commands:");
+                self.emulator_message("");
+                self.emulator_message("    cassette insert <format> <file> - loads a file into the cassette drive.");
+                self.emulator_message("    cassette eject                  - removes the currently inserted cassette from the drive.");
+                self.emulator_message("    cassette erase                  - clears the contents of the inserted cassette.");
+                self.emulator_message("    cassette seek   <position>      - rewinds the tape to the specified location.");
+                self.emulator_message("    cassette rewind                 - rewinds the tape to the beginning.");
+                self.emulator_message("");
+                self.emulator_message("The position argument to `/cassette seek' is a byte offset within the cassette file.  To get the current value of this offset, issue `/config show cassette_file_offset'.");
+                self.emulator_message("");
+                self.emulator_message("The file argument to the `/cassette load' command can either be a plain file name, which means a file with that name in the configuration directory, or a full path.  If the specified file doesn't exists, it will be created.  The format argument can be either CAS or CPT.");
+                self.emulator_message("");
+                self.emulator_message("In the current implementation, file names may not contain non-ascii characters, since there is no way to enter such characters in this user interface.");
             },
             HelpEntry::Config => {
                 self.emulator_message("The `config' command has the following sub-commands:");
@@ -974,6 +1059,96 @@ impl UserInterface {
             },
         }
     }
+    fn execute_cassette_subcommand(&mut self, sub_command: CassetteSubCommand, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+        match sub_command {
+            CassetteSubCommand::Insert { format, file } => {
+                if file.to_lowercase() == "none" {
+                    self.emulator_message(format!("A filename of `{}' is not allowed, since the config system would understand it as a lack of a cassette.", file).as_str());
+                } else {
+                    match config_system.change_config_entry("cassette_file", format!("= {}", file).as_str()) {
+                        Err(error) => {
+                            self.emulator_message(format!("Failed to set the cassette file in the config system: {}.", error).as_str());
+                        },
+                        Ok(..) => {
+                            memory_system.cas_rec.reload_cassette_file(config_system);
+                            match config_system.change_config_entry("cassette_file_format", match format {
+                                                                                                cassette::Format::CAS => { "= CAS" },
+                                                                                                cassette::Format::CPT => { "= CPT" },
+                                                                                            }) {
+                                Err(error) => {
+                                    self.emulator_message(format!("Failed to set the cassette file format in the config system: {}.", error).as_str());
+                                },
+                                Ok(..) => {
+                                    memory_system.cas_rec.change_cassette_data_format(config_system);
+                                    match config_system.change_config_entry("cassette_file_offset", "= 0") {
+                                        Err(error) => {
+                                            self.emulator_message(format!("Failed to set the cassette file offset in the config system: {}.", error).as_str());
+                                        },
+                                        Ok(..) => {
+                                            memory_system.cas_rec.update_cassette_file_offset(config_system);
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+            CassetteSubCommand::Eject => {
+                match config_system.config_items.cassette_file {
+
+                    Some(..) => {
+                        match config_system.change_config_entry("cassette_file", "= none") {
+                            Err(error) => {
+                                self.emulator_message(format!("Failed to update the cassette file field in the config system: {}.", error).as_str());
+                            },
+                            Ok(..) => {
+                                memory_system.cas_rec.reload_cassette_file(config_system);
+                                self.emulator_message("Cassette ejected.");
+
+                                match config_system.change_config_entry("cassette_file_offset", "= 0") {
+                                    Ok(_) => {
+                                        memory_system.cas_rec.update_cassette_file_offset(config_system);
+                                    },
+                                    Err(error) => {
+                                        self.emulator_message(format!("Note: Failed to reset the the file offset to 0: {}.", error).as_str());
+                                    },
+                                }
+                            },
+                        }
+                    },
+                    None => {
+                        self.emulator_message("The cassette drive is already empty.");
+                    },
+                }
+            },
+            CassetteSubCommand::Seek { position } => {
+                match config_system.change_config_entry("cassette_file_offset", format!("= {}", position).as_str()) {
+                    Err(error) => {
+                        self.emulator_message(format!("Failed to set the cassette file offset in the config system: {}.", error).as_str());
+                    },
+                    Ok(..) => {
+                        memory_system.cas_rec.update_cassette_file_offset(config_system);
+                        self.emulator_message(format!("Cassette rewound to position {}.", position).as_str());
+                    },
+                }
+            },
+            CassetteSubCommand::Rewind => {
+                match config_system.change_config_entry("cassette_file_offset", "= 0") {
+                    Err(error) => {
+                        self.emulator_message(format!("Failed to set the cassette file offset in the config system: {}.", error).as_str());
+                    },
+                    Ok(..) => {
+                        memory_system.cas_rec.update_cassette_file_offset(config_system);
+                        self.emulator_message("Cassette rewound back to the beginning.");
+                    },
+                }
+            },
+            CassetteSubCommand::Erase => {
+                memory_system.cas_rec.erase_cassette();
+            },
+        }
+    }
     fn execute_config_subcommand(&mut self, sub_command: ConfigSubCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
         match sub_command {
             ConfigSubCommand::List => {
@@ -997,7 +1172,6 @@ impl UserInterface {
                         return;
                     },
                 };
-                self.emulator_message("Requested configuration entry:");
                 self.emulator_message(&config_entry);
             },
             ConfigSubCommand::Change { entry_specifier, invocation_text } => {
@@ -1067,13 +1241,17 @@ impl UserInterface {
                                     self.emulator_message("Lowercase mod disabled.");
                                 }
                             },
-                            proj_config::ConfigChangeApplyAction::UpdateCassetteFilenames => {
-                                memory_system.cas_rec.update_cassette_paths(config_system);
-                                self.emulator_message("Cassette paths updated.");
+                            proj_config::ConfigChangeApplyAction::UpdateCassetteFile => {
+                                memory_system.cas_rec.reload_cassette_file(config_system);
+                                self.emulator_message("Cassette file changed.");
                             },
-                            proj_config::ConfigChangeApplyAction::UpdateCassetteFormats => {
-                                memory_system.cas_rec.update_cassette_formats(config_system);
-                                self.emulator_message("Cassette formats updated.");
+                            proj_config::ConfigChangeApplyAction::UpdateCassetteFileFormat => {
+                                memory_system.cas_rec.change_cassette_data_format(config_system);
+                                self.emulator_message("Cassette file data format changed.");
+                            },
+                            proj_config::ConfigChangeApplyAction::UpdateCassetteFileOffset => {
+                                memory_system.cas_rec.update_cassette_file_offset(config_system);
+                                self.emulator_message("Cassette file offset changed.");
                             },
                             proj_config::ConfigChangeApplyAction::Nothing => {
                                 self.emulator_message("Configuration updated.");

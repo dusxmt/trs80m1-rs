@@ -235,6 +235,41 @@ pub fn get_word(input: &str, order: usize) -> Option<String> {
     }
 }
 
+// A routine which retrieves the part of the input string that starts with
+// the selected word, where a word is defined as a set of non-whitespace
+// characters separated by whitespaces.
+//
+// The words are indexed from 1.
+//
+// Returns Some(text) if the starting word exists, or None if it does not.
+//
+pub fn get_starting_at_word(input: &str, order: usize) -> Option<String> {
+    let mut outside_of_word = true;
+    let mut current_word    = 0;
+    let mut collected_text  = "".to_owned();
+
+    for character in input.chars() {
+        if outside_of_word {
+            if !character.is_whitespace() {
+                current_word += 1;
+                outside_of_word = false;
+            }
+        }
+        if !outside_of_word {
+            if character.is_whitespace() {
+                outside_of_word = true;
+            }
+        }
+        if current_word >= order {
+            collected_text.push(character);
+        }
+    }
+    match collected_text.is_empty() {
+        false => { Some(collected_text.trim().to_owned()) },
+        true  => { None },
+    }
+}
+
 // The following routine parses a 32-bit unsigned number from a string,
 // accepting the `0x-', `0-' and `0b-' prefixes for hex, octal and binary, and
 // the `-h' postfix for hex.  The `_' is stripped from input.

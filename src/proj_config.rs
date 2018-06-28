@@ -68,11 +68,9 @@ pub struct ConfigItems {
 
 
     // [Cassette] Entries:
-    pub cassette_input_cassette:         Option<String>,
-    pub cassette_output_cassette:        Option<String>,
-
-    pub cassette_input_cassette_format:  cassette::Format,
-    pub cassette_output_cassette_format: cassette::Format,
+    pub cassette_file:                   Option<String>,
+    pub cassette_file_format:            cassette::Format,
+    pub cassette_file_offset:            usize,
 }
 
 impl ConfigItems {
@@ -105,11 +103,9 @@ impl ConfigItems {
             video_character_generator:       0,
             video_lowercase_mod:             false,
 
-            cassette_input_cassette:         None,
-            cassette_output_cassette:        None,
-
-            cassette_input_cassette_format:  cassette::Format::CAS,
-            cassette_output_cassette_format: cassette::Format::CAS,
+            cassette_file:                   None,
+            cassette_file_format:            cassette::Format::CAS,
+            cassette_file_offset:            0,
         }
     }
 }
@@ -348,8 +344,9 @@ pub enum ConfigChangeApplyAction {
     ChangeHwAccelUsage,
     ChangeCharacterGenerator,
     ChangeLowercaseModUsage,
-    UpdateCassetteFilenames,
-    UpdateCassetteFormats,
+    UpdateCassetteFile,
+    UpdateCassetteFileFormat,
+    UpdateCassetteFileOffset,
     Nothing,
     AlreadyUpToDate,
 }
@@ -1956,200 +1953,135 @@ fn new_video_section() -> ConfigSection {
 }
 
 // The cassette section and entries:
-fn update_line_cassette_input_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
-    let new_val = config_items.cassette_input_cassette.clone();
+fn update_line_cassette_file(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
+    let new_val = config_items.cassette_file.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_input_cassette(info_source, config_items) {
+    let failed_read = match parse_entry_cassette_file(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
 
     // Update only if we really need to update:
-    if failed_read || config_items.cassette_input_cassette != new_val {
-        config_items.cassette_input_cassette = new_val.clone();
+    if failed_read || config_items.cassette_file != new_val {
+        config_items.cassette_file = new_val.clone();
         match new_val {
             Some(value) => {
-                Some(format!("input_cassette = {}", value))
+                Some(format!("file = {}", value))
             },
             None => {
-                Some("input_cassette = none".to_owned())
+                Some("file = none".to_owned())
             },
         }
     } else {
         None
     }
 }
-fn update_line_cassette_output_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
-    let new_val = config_items.cassette_output_cassette.clone();
+fn update_line_cassette_file_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
+    let new_val = config_items.cassette_file_format;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_output_cassette(info_source, config_items) {
+    let failed_read = match parse_entry_cassette_file_format(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
 
     // Update only if we really need to update:
-    if failed_read || config_items.cassette_output_cassette != new_val {
-        config_items.cassette_output_cassette = new_val.clone();
-        match new_val {
-            Some(value) => {
-                Some(format!("output_cassette = {}", value))
-            },
-            None => {
-                Some("output_cassette = none".to_owned())
-            },
-        }
-    } else {
-        None
-    }
-}
-fn update_line_cassette_input_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
-    let new_val = config_items.cassette_input_cassette_format;
-
-    // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_input_cassette_format(info_source, config_items) {
-        Ok(..)  => { false },
-        Err(..) => { true  },
-    };
-
-    // Update only if we really need to update:
-    if failed_read || config_items.cassette_input_cassette_format != new_val {
-        config_items.cassette_input_cassette_format = new_val;
+    if failed_read || config_items.cassette_file_format != new_val {
+        config_items.cassette_file_format = new_val;
         match new_val {
             cassette::Format::CAS => {
-                Some("input_cassette_format = CAS".to_owned())
+                Some("file_format = CAS".to_owned())
             },
             cassette::Format::CPT => {
-                Some("input_cassette_format = CPT".to_owned())
+                Some("file_format = CPT".to_owned())
             },
         }
     } else {
         None
     }
 }
-fn update_line_cassette_output_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
-    let new_val = config_items.cassette_output_cassette_format;
+fn update_line_cassette_file_offset(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
+    let new_val = config_items.cassette_file_offset;
 
     // Re-parse the entry, to see if it really changed and to see whether
     // an update really is neccessary. On failure assume yes.
-    let failed_read = match parse_entry_cassette_output_cassette_format(info_source, config_items) {
+    let failed_read = match parse_entry_cassette_file_offset(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
     };
 
     // Update only if we really need to update:
-    if failed_read || config_items.cassette_output_cassette_format != new_val {
-        config_items.cassette_output_cassette_format = new_val;
-        match new_val {
-            cassette::Format::CAS => {
-                Some("output_cassette_format = CAS".to_owned())
-            },
-            cassette::Format::CPT => {
-                Some("output_cassette_format = CPT".to_owned())
-            },
-        }
+    if failed_read || config_items.cassette_file_offset != new_val {
+        config_items.cassette_file_offset = new_val;
+        Some(format!("file_offset = {}", new_val))
     } else {
         None
     }
 }
-fn parse_entry_cassette_input_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+fn parse_entry_cassette_file(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
     let argument = info_source.argument_text();
 
     if argument.to_uppercase() == "NONE" {
-        config_items.cassette_input_cassette = None;
+        config_items.cassette_file = None;
     } else {
-        config_items.cassette_input_cassette = Some(argument);
+        config_items.cassette_file = Some(argument);
     }
 
     Ok(())
 }
-fn parse_entry_cassette_output_cassette(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = info_source.argument_text();
-
-    if argument.to_uppercase() == "NONE" {
-        config_items.cassette_output_cassette = None;
-    } else {
-        config_items.cassette_output_cassette = Some(argument);
-    }
-
-    Ok(())
-}
-fn parse_entry_cassette_input_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+fn parse_entry_cassette_file_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
     let argument = info_source.argument_text();
     let compare_str = argument.to_uppercase();
 
     if compare_str == "CAS" {
-        config_items.cassette_input_cassette_format = cassette::Format::CAS;
+        config_items.cassette_file_format = cassette::Format::CAS;
         Ok(())
     } else if compare_str == "CPT" {
-        config_items.cassette_input_cassette_format = cassette::Format::CPT;
+        config_items.cassette_file_format = cassette::Format::CPT;
         Ok(())
     } else {
         Err(ConfigError::InvalidCassetteFormatSpecifier(info_source))
     }
 }
-fn parse_entry_cassette_output_cassette_format(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
-    let argument = info_source.argument_text();
-    let compare_str = argument.to_uppercase();
+fn parse_entry_cassette_file_offset(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    let argument = match info_source.argument_text().parse::<usize>() {
+        Ok(result) => { result },
+        Err(error) => { return Err(ConfigError::EntryIntParsingError(info_source, error)); },
+    };
 
-    if compare_str == "CAS" {
-        config_items.cassette_output_cassette_format = cassette::Format::CAS;
-        Ok(())
-    } else if compare_str == "CPT" {
-        config_items.cassette_output_cassette_format = cassette::Format::CPT;
-        Ok(())
-    } else {
-        Err(ConfigError::InvalidCassetteFormatSpecifier(info_source))
-    }
+    config_items.cassette_file_offset = argument;
+    Ok(())
 }
-fn new_handler_cassette_input_cassette() -> ConfigEntry {
+fn new_handler_cassette_file() -> ConfigEntry {
     let mut default_text: Vec<String> = Vec::new();
 
-    default_text.push("".to_owned());
-    default_text.push("; Currently, the way the cassette mechanism works is that there is an input".to_owned());
-    default_text.push("; and an output cassette.  Every time you load from a cassette, the input".to_owned());
-    default_text.push("; cassette file is loaded and read from byte zero.  Every time you save to a".to_owned());
-    default_text.push("; cassette, the output cassette file gets overridden with a new one.".to_owned());
+    default_text.push("; The name of the cassette file currently in the tape drive.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("; This system is likely only temporary, before a runtime control interface".to_owned());
-    default_text.push("; is implemented that would allow cassette manipulation on the fly.".to_owned());
+    default_text.push("; You can either specify a full path to a cassette file, a simple file name".to_owned());
+    default_text.push("; if you want the file to be located in the configuration directory, or the".to_owned());
+    default_text.push("; keyword `none' to leave the tape drive empty.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("; You can either specify a full path to the cassette files, or just a filename".to_owned());
-    default_text.push("; if you placed them into the configuration directory.".to_owned());
+    default_text.push("; If the specified file doesn't exist yet, it will be created.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("input_cassette = none".to_owned());
-
-    ConfigEntry {
-        entry_name:   "input_cassette".to_owned(),
-        default_text: default_text.into_boxed_slice(),
-        apply_action: ConfigChangeApplyAction::UpdateCassetteFilenames,
-        update_line:  update_line_cassette_input_cassette,
-        parse_entry:  parse_entry_cassette_input_cassette,
-    }
-}
-fn new_handler_cassette_output_cassette() -> ConfigEntry {
-    let mut default_text: Vec<String> = Vec::new();
-
-    default_text.push("output_cassette = none".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("file = none".to_owned());
     default_text.push("".to_owned());
 
     ConfigEntry {
-        entry_name:   "output_cassette".to_owned(),
+        entry_name:   "file".to_owned(),
         default_text: default_text.into_boxed_slice(),
-        apply_action: ConfigChangeApplyAction::UpdateCassetteFilenames,
-        update_line:  update_line_cassette_output_cassette,
-        parse_entry:  parse_entry_cassette_output_cassette,
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFile,
+        update_line:  update_line_cassette_file,
+        parse_entry:  parse_entry_cassette_file,
     }
 }
-fn new_handler_cassette_input_cassette_format() -> ConfigEntry {
+fn new_handler_cassette_file_format() -> ConfigEntry {
     let mut default_text: Vec<String> = Vec::new();
 
-    default_text.push("".to_owned());
-    default_text.push("; Which cassette format to use (CAS or CPT):".to_owned());
+    default_text.push("; Cassette file format selection (CAS or CPT):".to_owned());
     default_text.push(";".to_owned());
     default_text.push("; Currently, the emulator supports two cassette file formats:".to_owned());
     default_text.push(";".to_owned());
@@ -2167,37 +2099,54 @@ fn new_handler_cassette_input_cassette_format() -> ConfigEntry {
     default_text.push(";           a perfect, noise-free cassette, so any cassette routines that even".to_owned());
     default_text.push(";           halfway worked on real hardware should work with it.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("input_cassette_format = CAS".to_owned());
-
-    ConfigEntry {
-        entry_name:   "input_cassette_format".to_owned(),
-        default_text: default_text.into_boxed_slice(),
-        apply_action: ConfigChangeApplyAction::UpdateCassetteFormats,
-        update_line:  update_line_cassette_input_cassette_format,
-        parse_entry:  parse_entry_cassette_input_cassette_format,
-    }
-}
-fn new_handler_cassette_output_cassette_format() -> ConfigEntry {
-    let mut default_text: Vec<String> = Vec::new();
-
-    default_text.push("output_cassette_format = CAS".to_owned());
+    default_text.push("file_format = CAS".to_owned());
     default_text.push("".to_owned());
 
     ConfigEntry {
-        entry_name:   "output_cassette_format".to_owned(),
+        entry_name:   "file_format".to_owned(),
         default_text: default_text.into_boxed_slice(),
-        apply_action: ConfigChangeApplyAction::UpdateCassetteFormats,
-        update_line:  update_line_cassette_output_cassette_format,
-        parse_entry:  parse_entry_cassette_output_cassette_format,
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFileFormat,
+        update_line:  update_line_cassette_file_format,
+        parse_entry:  parse_entry_cassette_file_format,
+    }
+}
+fn new_handler_cassette_file_offset() -> ConfigEntry {
+    let mut default_text: Vec<String> = Vec::new();
+
+    default_text.push("; Current byte offset into the cassette.".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("; This value indicates how far the cassette is currently wound past the".to_owned());
+    default_text.push("; beginning, in bytes.".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("; The cassette can be rewound to arbitrary locations, and thus several different".to_owned());
+    default_text.push("; records/files can be recorded and later loaded from a single cassette, as long".to_owned());
+    default_text.push("; as you keep track of where the different records/files are located, or request".to_owned());
+    default_text.push("; files based on their filename (Level II BASIC).  See `/help cassette' in the".to_owned());
+    default_text.push("; curses-based user interface for more details.".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("; Please note that if a format like CPT is used, setting the offset to arbitrary".to_owned());
+    default_text.push("; locations might cause the data to be incorrectly parsed (since it may easily".to_owned());
+    default_text.push("; get out of alignment), it is therefore advised to only explicitly set this".to_owned());
+    default_text.push("; parameters to known-good values (ie. the beginning and end locations of the".to_owned());
+    default_text.push("; individual records/files on the tape).".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("file_offset = 0".to_owned());
+    default_text.push("".to_owned());
+
+    ConfigEntry {
+        entry_name:   "file_offset".to_owned(),
+        default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::UpdateCassetteFileOffset,
+        update_line:  update_line_cassette_file_offset,
+        parse_entry:  parse_entry_cassette_file_offset,
     }
 }
 fn new_cassette_section() -> ConfigSection {
     let mut entries: Vec<ConfigEntry> = Vec::new();
 
-    entries.push(new_handler_cassette_input_cassette());
-    entries.push(new_handler_cassette_output_cassette());
-    entries.push(new_handler_cassette_input_cassette_format());
-    entries.push(new_handler_cassette_output_cassette_format());
+    entries.push(new_handler_cassette_file());
+    entries.push(new_handler_cassette_file_format());
+    entries.push(new_handler_cassette_file_offset());
 
     ConfigSection {
         section_name: "Cassette".to_owned(),
