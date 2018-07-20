@@ -1820,7 +1820,9 @@ fn new_handler_video_bg_color() -> ConfigEntry {
     default_text.push("; The colors to use for the screen background and foreground, specified using".to_owned());
     default_text.push("; the hex (#RRGGBB) format.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("; By default, the background is black and the foreground is green.".to_owned());
+    default_text.push("; By default, the background is black, #000000, and the foreground is green,".to_owned());
+    default_text.push("; #00FF00; other common choices for the foreground are amber, #FFBF00, and".to_owned());
+    default_text.push("; gray, #A8A8A8.".to_owned());
     default_text.push(";".to_owned());
     default_text.push("bg_color = #000000".to_owned());
 
