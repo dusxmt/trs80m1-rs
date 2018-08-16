@@ -13,9 +13,6 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
-use std::thread;
-use std::time as std_time;
-
 use sdl2;
 
 use z80::cpu;
@@ -25,7 +22,7 @@ use memory::MemoryChipOps;
 use keyboard;
 use video;
 use fonts;
-use time;
+use timing;
 use user_interface;
 use util;
 use util::MessageLogging;
@@ -116,11 +113,6 @@ impl Emulator {
     // Runs the emulator; returns whether to ask for the user to press Enter
     // to close the program on Windows.
     pub fn run(&mut self, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem, mut startup_logger: util::StartupLogger) -> bool {
-        let mut frame_begin:     std_time::Duration;
-        let mut frame_end:       std_time::Duration;
-        let mut last_frame_ns:   u32;
-        let mut residual_ns:     u32;
-        let mut frame_cycles:    u32;
         let mut in_desktop_fsm:  bool;
 
         // Initialize SDL:
@@ -175,15 +167,11 @@ impl Emulator {
         let (mut narrow_glyphs, mut wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
 
         self.full_reset(memory_system);
-        let stamp_now = time::get_time();
-        frame_begin = std_time::Duration::new(stamp_now.sec as u64, stamp_now.nsec as u32);
+        let mut timer = timing::FrameTimer::new(ns_per_frame, NS_PER_CPU_CYCLE);
 
-        last_frame_ns = ns_per_frame;
         loop {
-            // Execute as many machine cycles as we should've executed on the
-            // last frame.
-            frame_cycles = last_frame_ns / NS_PER_CPU_CYCLE;
-            residual_ns  = last_frame_ns % NS_PER_CPU_CYCLE;
+            let frame_cycles = timer.frame_cycles();
+
             self.input_system.handle_events(&mut self.exit_request, &mut event_pump);
             if self.exit_request { return false; }
             if self.input_system.reset_request {
@@ -263,34 +251,7 @@ impl Emulator {
 
             self.video_system.render(&mut renderer, &narrow_glyphs, &wide_glyphs, memory_system);
 
-            let stamp_now = time::get_time();
-            frame_end = std_time::Duration::new(stamp_now.sec as u64, stamp_now.nsec as u32);
-            let mut frame_duration = frame_end - frame_begin;
-
-            // If we have time to spare, take a nap.
-            let frame_dur_ns = frame_duration.subsec_nanos();
-            if frame_duration.as_secs() == 0 &&
-                frame_dur_ns < ns_per_frame {
-
-                thread::sleep(std_time::Duration::new(0, ns_per_frame - frame_dur_ns));
-                let stamp_now = time::get_time();
-                frame_end = std_time::Duration::new(stamp_now.sec as u64, stamp_now.nsec as u32);
-                frame_duration = frame_end - frame_begin;
-            }
-            if frame_duration.as_secs() == 0 {
-                last_frame_ns = frame_duration.subsec_nanos();
-            } else {
-                // In case the frame lasted longer than a second... pretend
-                // that it didn't :3
-                last_frame_ns = 1_000_000_000;
-            }
-
-            // Take care of the remaining time from the frame before this one
-            // that was too short to execute any cycles:
-            last_frame_ns += residual_ns;
-
-            // Our end is someone else's beginning.
-            frame_begin = frame_end;
+            timer.frame_next();
         }
     }
     pub fn power_on(&mut self, _memory_system: &mut memory::MemorySystem) {

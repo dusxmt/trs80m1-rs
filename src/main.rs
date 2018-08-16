@@ -28,6 +28,7 @@ mod fonts;
 mod keyboard;
 mod memory;
 mod proj_config;
+mod timing;
 mod user_interface;
 mod util;
 mod video;
