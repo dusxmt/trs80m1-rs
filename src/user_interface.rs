@@ -1199,7 +1199,7 @@ impl UserInterface {
                                 self.emulator_message("Ram size changed.");
                             },
                             proj_config::ConfigChangeApplyAction::UpdateMsPerKeypress => {
-                                emulator.update_cycles_per_keypress(config_system.config_items.keyboard_ms_per_keypress);
+                                emulator.scheduler_update = true;
                                 self.emulator_message("Miliseconds per keypress setting updated.");
                             },
                             proj_config::ConfigChangeApplyAction::ChangeWindowedResolution => {

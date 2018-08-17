@@ -27,12 +27,6 @@ use user_interface;
 use util;
 use util::MessageLogging;
 
-// Timing description:
-const     MASTER_HZ:            u32 = 10_644_480;
-const     FRAME_RATE:           u32 = MASTER_HZ     / 177_408;
-const     NS_PER_FRAME:         u32 = 1_000_000_000 / FRAME_RATE;
-pub const CPU_HZ:               u32 = MASTER_HZ     / 6;
-const     NS_PER_CPU_CYCLE:     u32 = 1_000_000_000 / CPU_HZ;
 
 pub struct Emulator {
     pub cpu:                  cpu::CPU,
@@ -45,10 +39,7 @@ pub struct Emulator {
     pub exit_request:         bool,
     pub video_config_update:  bool,
     pub resolution_update:    bool,
-
-    // Keyboard timing information:
-    cycles_per_keypress:      u32,
-    cycles_since_last:        u32,
+    pub scheduler_update:     bool,
 }
 
 impl Emulator {
@@ -72,8 +63,7 @@ impl Emulator {
             exit_request:        false,
             video_config_update: false,
             resolution_update:   false,
-            cycles_per_keypress: (CPU_HZ * config_items.keyboard_ms_per_keypress) / 1000,
-            cycles_since_last:   0,
+            scheduler_update:    false,
         }
     }
     fn rgb888_into_rgb332(red: u8, green: u8, blue: u8) -> u8 {
@@ -87,27 +77,6 @@ impl Emulator {
             2 => { fonts::FontSelector::CG1 },
             3 => { fonts::FontSelector::CG2 },
             _ => { panic!("Invalid character generator selected"); },
-        }
-    }
-    pub fn update_cycles_per_keypress(&mut self, keyboard_ms_per_keypress: u32) {
-        self.cycles_per_keypress = (CPU_HZ * keyboard_ms_per_keypress) / 1000;
-        self.cycles_since_last   = 0;
-    }
-    pub fn emulate_cycles(&mut self, cycles_to_exec: u32, memory_system: &mut memory::MemorySystem) {
-        let mut needed_cycles = cycles_to_exec;
-
-        while (self.cycles_since_last + needed_cycles) > self.cycles_per_keypress {
-            let to_exec = self.cycles_per_keypress - self.cycles_since_last;
-
-            self.cpu.exec(to_exec, memory_system);
-            self.input_system.update_keyboard(memory_system);
-
-            self.cycles_since_last = 0;
-            needed_cycles -= to_exec;
-        }
-        if needed_cycles > 0 {
-            self.cpu.exec(needed_cycles, memory_system);
-            self.cycles_since_last += needed_cycles;
         }
     }
     // Runs the emulator; returns whether to ask for the user to press Enter
@@ -140,13 +109,13 @@ impl Emulator {
                     startup_logger.log_message(format!("Failed to get the display mode: {}.", err));
                     startup_logger.log_message("Assuming that vsync doesn't work.".to_owned());
                     renderer = window.renderer().accelerated().build().expect(".expect() call: Failed to create an accelerated SDL2 renderer without vsync");
-                    ns_per_frame = NS_PER_FRAME;
+                    ns_per_frame = timing::NS_PER_FRAME;
                 },
             }
         } else {
             startup_logger.log_message("Using the software rendering mode.".to_owned());
             renderer = window.renderer().software().build().expect(".expect() call: Failed to create a non-accelerated SDL2 renderer");
-            ns_per_frame = NS_PER_FRAME;
+            ns_per_frame = timing::NS_PER_FRAME;
         }
         renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT).expect(".expect() call: Failed to set the SDL2 renderer's logical size");
         in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
@@ -167,8 +136,8 @@ impl Emulator {
         let (mut narrow_glyphs, mut wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
 
         self.full_reset(memory_system);
-        let mut timer = timing::FrameTimer::new(ns_per_frame, NS_PER_CPU_CYCLE);
-
+        let mut timer = timing::FrameTimer::new(ns_per_frame, timing::NS_PER_CPU_CYCLE);
+        let mut scheduler = timing::Scheduler::new(config_system);
         loop {
             let frame_cycles = timer.frame_cycles();
 
@@ -214,12 +183,18 @@ impl Emulator {
                 }
                 self.resolution_update = false;
             }
-
+            if self.scheduler_update {
+                scheduler.update(config_system);
+                self.scheduler_update = false;
+            }
             if memory_system.cas_rec.config_update_request {
                 memory_system.cas_rec.handle_config_update_request(config_system);
             }
             if self.powered_on && !self.paused {
-                self.emulate_cycles(frame_cycles, memory_system);
+                scheduler.perform_cycles(frame_cycles,
+                                         &mut self.cpu,
+                                         &mut self.input_system,
+                                         memory_system);
             }
             user_interface.collect_logged_messages(self, memory_system);
             user_interface.update_screen(&self);

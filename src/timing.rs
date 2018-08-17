@@ -16,7 +16,18 @@
 use std::thread;
 use std::time as std_time;
 
+use z80::cpu;
+use keyboard;
+use memory;
+use proj_config;
 use time;
+
+// Timing description:
+pub const MASTER_HZ:          u32 = 10_644_480;
+pub const FRAME_RATE:         u32 = MASTER_HZ     / 177_408;
+pub const NS_PER_FRAME:       u32 = 1_000_000_000 / FRAME_RATE;
+pub const CPU_HZ:             u32 = MASTER_HZ     / 6;
+pub const NS_PER_CPU_CYCLE:   u32 = 1_000_000_000 / CPU_HZ;
 
 
 // The following is a timer which manages frames.
@@ -88,5 +99,58 @@ impl FrameTimer {
 
         // Our end is someone else's beginning.
         self.frame_begin = frame_end;
+    }
+}
+
+
+// Execution scheduler:
+//
+// The following structure handles the timely invocation of the different
+// devices present within the emulator.
+//
+// The current implementation is quite a bit simplified from what I'd eventually
+// like to have, but since we only have one processor and one IO device
+// (keyboard), it is adequate.
+//
+pub struct Scheduler {
+    // Keyboard timing information:
+    cycles_per_keypress:  u32,
+    cycles_since_last:    u32,
+}
+
+impl Scheduler {
+    pub fn new(config_system: &proj_config::ConfigSystem) -> Scheduler {
+        let mut scheduler = Scheduler {
+                                cycles_per_keypress:  0,
+                                cycles_since_last:    0,
+                            };
+        scheduler.update (config_system);
+
+        scheduler
+    }
+    pub fn update(&mut self, config_system: &proj_config::ConfigSystem) {
+        self.cycles_per_keypress = (CPU_HZ * config_system.config_items.keyboard_ms_per_keypress) / 1000;
+        self.cycles_since_last   = 0;
+    }
+    pub fn perform_cycles(&mut self,
+                          cycles_to_exec:  u32,
+                          cpu:             &mut cpu::CPU,
+                          input_system:    &mut keyboard::InputSystem,
+                          memory_system:   &mut memory::MemorySystem) {
+        let mut needed_cycles = cycles_to_exec;
+
+        while (self.cycles_since_last + needed_cycles) > self.cycles_per_keypress {
+            let to_exec = self.cycles_per_keypress - self.cycles_since_last;
+
+            cpu.exec(to_exec, memory_system);
+            input_system.update_keyboard(memory_system);
+
+            self.cycles_since_last = 0;
+            needed_cycles -= to_exec;
+        }
+        if needed_cycles > 0 {
+            cpu.exec(needed_cycles, memory_system);
+            self.cycles_since_last += needed_cycles;
+        }
     }
 }

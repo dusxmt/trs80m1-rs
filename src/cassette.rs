@@ -33,12 +33,12 @@ use std::io::Write;
 
 use proj_config;
 use memory;
-use emulator;
+use timing;
 use util;
 use util::MessageLogging;
 
 
-const CPU_MHZ:    f32 = (emulator::CPU_HZ as f32) / (1_000_000 as f32);
+const CPU_MHZ:    f32 = (timing::CPU_HZ as f32) / (1_000_000 as f32);
 const DETECT_250: f32 = 1200.0;   // For level 1 input routine detection.
 
 
