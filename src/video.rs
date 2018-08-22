@@ -120,9 +120,9 @@ fn font_for_cg_num(character_generator: u32) -> &'static [u8] {
 }
 
 // Generate textures for the screen tiles.
-pub fn generate_glyph_textures(config_system: &proj_config::ConfigSystem,
-                               renderer: &mut sdl2::render::Renderer)
-           -> (Box<[sdl2::render::Texture]>, Box<[sdl2::render::Texture]>) {
+pub fn generate_glyph_textures<'c, 't>(config_system:   &'c proj_config::ConfigSystem,
+                                       texture_creator: &'t sdl2::render::TextureCreator<sdl2::video::WindowContext>)
+           -> (Box<[sdl2::render::Texture<'t>]>, Box<[sdl2::render::Texture<'t>]>) {
 
     let mut narrow: Vec<sdl2::render::Texture> = Vec::new();
     let mut wide:   Vec<sdl2::render::Texture> = Vec::new();
@@ -137,7 +137,7 @@ pub fn generate_glyph_textures(config_system: &proj_config::ConfigSystem,
 
 
     for glyph_iter in 0..256 {
-        let mut texture = renderer.create_texture(sdl2::pixels::PixelFormatEnum::RGB332,
+        let mut texture = texture_creator.create_texture(sdl2::pixels::PixelFormatEnum::RGB332,
             sdl2::render::TextureAccess::Static, GLYPH_WIDTH, GLYPH_HEIGHT_S).unwrap();
         let font_glyph: &[u8];
         if (glyph_iter & 0x80) == 0 {
@@ -168,7 +168,7 @@ pub fn generate_glyph_textures(config_system: &proj_config::ConfigSystem,
         narrow.push(texture);
     }
     for glyph_iter in 0..256 {
-        let mut texture = renderer.create_texture(sdl2::pixels::PixelFormatEnum::RGB332,
+        let mut texture = texture_creator.create_texture(sdl2::pixels::PixelFormatEnum::RGB332,
             sdl2::render::TextureAccess::Static, GLYPH_WIDTH_W, GLYPH_HEIGHT_S).unwrap();
         let font_glyph: &[u8];
         if (glyph_iter & 0x80) == 0 {
@@ -207,20 +207,20 @@ pub fn generate_glyph_textures(config_system: &proj_config::ConfigSystem,
 }
 
 // Render the screen contents:
-pub fn render(renderer: &mut sdl2::render::Renderer,
+pub fn render(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
               narrow: &Box<[sdl2::render::Texture]>,
               wide: &Box<[sdl2::render::Texture]>,
               memory_system: &mut memory::MemorySystem) {
 
     let ref mut vid_mem = memory_system.vid_mem;
 
-    renderer.clear();
+    canvas.clear();
     if !vid_mem.modesel {
         for glyph_y in 0..SCREEN_ROWS {
             for glyph_x in 0..SCREEN_COLS {
                 let glyph_texture = &narrow[vid_mem.memory[((glyph_y * SCREEN_COLS) as usize) + (glyph_x as usize)] as usize];
                 let dest = sdl2::rect::Rect::new((glyph_x as i32) * (GLYPH_WIDTH as i32), (glyph_y as i32) * (GLYPH_HEIGHT_S as i32), GLYPH_WIDTH, GLYPH_HEIGHT_S);
-                renderer.copy(glyph_texture, None, Some(dest)).unwrap();
+                canvas.copy(glyph_texture, None, Some(dest)).unwrap();
             }
         }
     } else {
@@ -228,11 +228,11 @@ pub fn render(renderer: &mut sdl2::render::Renderer,
             for glyph_x in 0..SCREEN_COLS_W {
                 let glyph_texture = &wide[vid_mem.memory[((glyph_y * SCREEN_COLS) as usize) + ((glyph_x * 2) as usize)] as usize];
                 let dest = sdl2::rect::Rect::new((glyph_x as i32) * (GLYPH_WIDTH_W as i32), (glyph_y as i32) * (GLYPH_HEIGHT_S as i32), GLYPH_WIDTH_W, GLYPH_HEIGHT_S);
-                renderer.copy(glyph_texture, None, Some(dest)).unwrap();
+                canvas.copy(glyph_texture, None, Some(dest)).unwrap();
             }
         }
     }
-    renderer.present();
+    canvas.present();
 }
 
 impl MessageLogging for VideoMemory {

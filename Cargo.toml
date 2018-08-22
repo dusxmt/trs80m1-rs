@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Marek Benc <dusxmt@gmx.com>"]
 
 [dependencies]
-sdl2 = "0.28.0"
+sdl2 = "0.31"
 time = "0.1.35"
 getopts = "0.2"
 

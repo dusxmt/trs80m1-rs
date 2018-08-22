@@ -221,10 +221,10 @@ impl Runtime {
     fn handle_updates_video(&mut self,
                             config_system: &proj_config::ConfigSystem,
                             in_desktop_fsm: &mut bool,
-                            renderer: &mut sdl2::render::Renderer) {
+                            canvas: &mut sdl2::render::Canvas<sdl2::video::Window>) {
 
         if self.fullscreen_desired != self.fullscreen {
-            let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen status");
+            let window = canvas.window_mut();
             if self.fullscreen_desired {
                 *in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
 
@@ -250,11 +250,14 @@ impl Runtime {
 
         if self.resolution_update {
             if self.fullscreen && !*in_desktop_fsm {
-                let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen resolution");
+
+                let window = canvas.window_mut();
                 let (width, height) = config_system.config_items.video_fullscreen_resolution;
                 window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
+
             } else if !self.fullscreen {
-                let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the windowed resolution");
+
+                let window = canvas.window_mut();
                 let (width, height) = config_system.config_items.video_windowed_resolution;
                 window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
             }
@@ -282,12 +285,12 @@ impl Runtime {
         };
         self.fullscreen = false;
 
-        let (renderer_result, ns_per_frame) = match window.display_mode() {
+        let (canvas_result, ns_per_frame) = match window.display_mode() {
             Ok(mode) => {
                 if mode.refresh_rate == 0 {
 
                     self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
-                    (window.renderer().accelerated().build(), timing::NS_PER_FRAME)
+                    (window.into_canvas().accelerated().build(), timing::NS_PER_FRAME)
 
                 } else {
 
@@ -295,26 +298,26 @@ impl Runtime {
                     let ns_per_frame = 1_000_000_000 / fallback_refresh_rate;
                     self.log_message(format!("SDL reports a display refresh rate of {}Hz; using vsync, setting software fallback framerate throttle to {} FPS.", mode.refresh_rate, fallback_refresh_rate));
 
-                    (window.renderer().accelerated().present_vsync().build(), ns_per_frame)
+                    (window.into_canvas().accelerated().present_vsync().build(), ns_per_frame)
                 }
             },
             Err(err) => {
                 self.log_message(format!("Failed to get the display mode: {}.", err));
                 self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
 
-                (window.renderer().accelerated().build(), timing::NS_PER_FRAME)
+                (window.into_canvas().accelerated().build(), timing::NS_PER_FRAME)
             },
         };
 
-        let mut renderer = match renderer_result {
-            Ok(renderer) => { renderer },
+        let mut canvas = match canvas_result {
+            Ok(canvas) => { canvas },
             Err(error) => {
                 self.log_message(format!("Failed to create a hardware accelerated rendering context: {}.", error));
                 return false;
             },
         };
 
-        match renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT) {
+        match canvas.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT) {
             Ok(..) => { () },
             Err(error) => {
                 self.log_message(format!("Failed to set the SDL2 renderer's logical size: {}.", error));
@@ -322,17 +325,18 @@ impl Runtime {
             },
         }
 
+        let texture_creator = canvas.texture_creator();
         let mut in_desktop_fsm = false;
 
         while !self.curses_exit_request
               && !self.sdl_exit_request
               && !self.video_system_update {
 
-            let (narrow_glyphs, wide_glyphs) = video::generate_glyph_textures(config_system, &mut renderer);
+            let (narrow_glyphs, wide_glyphs) = video::generate_glyph_textures(config_system, &texture_creator);
             self.video_textures_update = false;
 
             self.run_with_video(config_system, user_interface, scheduler, devices, memory_system,
-                                &mut renderer, &narrow_glyphs, &wide_glyphs,
+                                &mut canvas, &narrow_glyphs, &wide_glyphs,
                                 event_pump, &mut in_desktop_fsm, ns_per_frame);
         }
         true
@@ -358,15 +362,15 @@ impl Runtime {
         };
         self.fullscreen = false;
 
-        let mut renderer = match window.renderer().software().build() {
-            Ok(renderer) => { renderer },
+        let mut canvas = match window.into_canvas().software().build() {
+            Ok(canvas) => { canvas },
             Err(error) => {
                 self.log_message(format!("Failed to create a non-hardware-accelerated rendering context: {}.", error));
                 return false;
             },
         };
 
-        match renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT) {
+        match canvas.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT) {
             Ok(..) => { () },
             Err(error) => {
                 self.log_message(format!("Failed to set the SDL2 renderer's logical size: {}.", error));
@@ -374,17 +378,18 @@ impl Runtime {
             },
         }
 
+        let texture_creator = canvas.texture_creator();
         let mut in_desktop_fsm = false;
 
         while !self.curses_exit_request
               && !self.sdl_exit_request
               && !self.video_system_update {
 
-            let (narrow_glyphs, wide_glyphs) = video::generate_glyph_textures(config_system, &mut renderer);
+            let (narrow_glyphs, wide_glyphs) = video::generate_glyph_textures(config_system, &texture_creator);
             self.video_textures_update = false;
 
             self.run_with_video(config_system, user_interface, scheduler, devices, memory_system,
-                                &mut renderer, &narrow_glyphs, &wide_glyphs,
+                                &mut canvas, &narrow_glyphs, &wide_glyphs,
                                 event_pump, &mut in_desktop_fsm, timing::NS_PER_FRAME);
         }
         true
@@ -396,7 +401,7 @@ impl Runtime {
                       devices:         &mut Devices,
                       memory_system:   &mut memory::MemorySystem,
 
-                      renderer:        &mut sdl2::render::Renderer,
+                      canvas:          &mut sdl2::render::Canvas<sdl2::video::Window>,
                       narrow_glyphs:   &Box<[sdl2::render::Texture]>,
                       wide_glyphs:     &Box<[sdl2::render::Texture]>,
                       event_pump:      &mut sdl2::EventPump,
@@ -415,7 +420,7 @@ impl Runtime {
             devices.keyboard.handle_events(self, event_pump);
             user_interface.handle_user_input(config_system, self, devices, memory_system);
             self.handle_updates(config_system, scheduler, devices, memory_system);
-            self.handle_updates_video(config_system, in_desktop_fsm, renderer);
+            self.handle_updates_video(config_system, in_desktop_fsm, canvas);
 
             if self.powered_on && !self.paused {
                 scheduler.perform_cycles(frame_cycles, devices, memory_system);
@@ -424,7 +429,7 @@ impl Runtime {
             user_interface.collect_logged_messages(self, devices, memory_system);
             user_interface.update_screen(&self, &devices);
 
-            video::render(renderer, narrow_glyphs, wide_glyphs, memory_system);
+            video::render(canvas, narrow_glyphs, wide_glyphs, memory_system);
             timer.frame_next();
         }
     }
