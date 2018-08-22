@@ -531,6 +531,8 @@ pub struct UserInterface {
     prompt_history_pos:          usize,  // 0 refers to prompt_text
 
     status_displayed_halted:     bool,
+    status_displayed_powered_on: bool,
+    status_displayed_paused:     bool,
 }
 
 impl UserInterface {
@@ -576,7 +578,9 @@ impl UserInterface {
                                      prompt_history_max_entries:  MAX_HISTORY_ENTRIES,
                                      prompt_history_pos:          0,
 
-                                     status_displayed_halted:     true,
+                                     status_displayed_halted:     false,
+                                     status_displayed_powered_on: false,
+                                     status_displayed_paused:     false,
                                  };
         user_interface.handle_resize_event();
 
@@ -587,7 +591,11 @@ impl UserInterface {
             self.emulator_message(message.as_str());
         }
     }
-    pub fn handle_user_input(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+    pub fn handle_user_input(&mut self,
+                             config_system: &mut proj_config::ConfigSystem,
+                             runtime: &mut emulator::Runtime,
+                             devices: &mut emulator::Devices,
+                             memory_system: &mut memory::MemorySystem) {
         loop {
             let user_input = self.window.getch();
             match user_input {
@@ -595,7 +603,7 @@ impl UserInterface {
                     match input {
                         pancurses::Input::KeyResize     => { self.handle_resize_event() },
 
-                        pancurses::Input::KeyF1         => { self.execute_command("help", emulator, memory_system, config_system); },
+                        pancurses::Input::KeyF1         => { self.execute_command("help", config_system, runtime, memory_system); },
 
                         pancurses::Input::KeyNPage      => { self.scroll_lines_down(); },
                         pancurses::Input::KeyPPage      => { self.scroll_lines_up(); },
@@ -609,11 +617,11 @@ impl UserInterface {
                         pancurses::Input::KeyHome       => { self.prompt_handle_home_key(); },
                         pancurses::Input::KeyEnd        => { self.prompt_handle_end_key(); },
 
-                        pancurses::Input::KeyEnter      => { self.prompt_handle_enter_key(emulator, memory_system, config_system); },
+                        pancurses::Input::KeyEnter      => { self.prompt_handle_enter_key(config_system, runtime, devices, memory_system); },
 
                         pancurses::Input::Unknown(input_code) => {
                             match input_code {
-                                155 => { self.prompt_handle_enter_key(emulator, memory_system, config_system); },  // Enter (keypad, w32)
+                                155 => { self.prompt_handle_enter_key(config_system, runtime, devices, memory_system); },        // Enter (keypad, w32)
                                 _   => { },
                             }
                         },
@@ -623,10 +631,10 @@ impl UserInterface {
                                 self.prompt_insert_char(util::ascii_to_printable_char(input_char as u8));
                             } else {
                                 match input_char as u8 {
-                                    0x08  => { self.prompt_handle_backspace_key(); },                                    // Backspace (w32)
-                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },                  // CTRL+L
-                                    0x0D  => { self.prompt_handle_enter_key(emulator, memory_system, config_system); },  // Enter
-                                    0x15  => { self.prompt_handle_ctrl_u(); },                                           // CTRL+U
+                                    0x08  => { self.prompt_handle_backspace_key(); },                                            // Backspace (w32)
+                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },                          // CTRL+L
+                                    0x0D  => { self.prompt_handle_enter_key(config_system, runtime, devices, memory_system); },  // Enter
+                                    0x15  => { self.prompt_handle_ctrl_u(); },                                                   // CTRL+U
                                     _     => { },
                                 }
                             }
@@ -663,7 +671,10 @@ impl UserInterface {
             self.redraw_needed = true;
         }
     }
-    pub fn execute_command(&mut self, input_str: &str, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+    pub fn execute_command(&mut self, input_str: &str,
+                           config_system: &mut proj_config::ConfigSystem,
+                           runtime: &mut emulator::Runtime,
+                           memory_system: &mut memory::MemorySystem) {
 
         let command = match util::get_word(input_str, 1) {
                           Some(command_word) => { command_word.to_lowercase() },
@@ -671,24 +682,27 @@ impl UserInterface {
                       };
 
         if command == "exit" || command == "quit" {
-            emulator.exit_request = true;
+            runtime.curses_exit_request = true;
 
         // Alias for "clear screen":
         } else if command == "clear" || command == "cls" {
-            self.execute_command("messages clear all", emulator, memory_system, config_system)
+            self.execute_command("messages clear all", config_system, runtime, memory_system)
 
         // Alias for "pause" and "unpause":
         } else if command == "pause" {
-            self.execute_command("machine pause on", emulator, memory_system, config_system)
+            self.execute_command("machine pause on", config_system, runtime, memory_system)
 
         } else if command == "unpause" {
-            self.execute_command("machine pause off", emulator, memory_system, config_system)
+            self.execute_command("machine pause off", config_system, runtime, memory_system)
 
         } else {
-            self.execute_parsed_command (ParsedUserCommand::parse(input_str), emulator, memory_system, config_system);
+            self.execute_parsed_command (ParsedUserCommand::parse(input_str), config_system, runtime, memory_system)
         }
     }
-    fn execute_parsed_command (&mut self, command: ParsedUserCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+    fn execute_parsed_command (&mut self, command: ParsedUserCommand,
+                               config_system: &mut proj_config::ConfigSystem,
+                               runtime: &mut emulator::Runtime,
+                               memory_system: &mut memory::MemorySystem) {
         match command {
             ParsedUserCommand::Help(help_entry) => {
                 self.show_help_entry(help_entry);
@@ -697,16 +711,16 @@ impl UserInterface {
                 self.execute_messages_subcommand(sub_command);
             },
             ParsedUserCommand::Machine(sub_command) => {
-                self.execute_machine_subcommand(sub_command, emulator, memory_system);
+                self.execute_machine_subcommand(sub_command, runtime);
             },
             ParsedUserCommand::Memory(sub_command) => {
                 self.execute_memory_subcommand(sub_command, memory_system);
             },
             ParsedUserCommand::Cassette(sub_command) => {
-                self.execute_cassette_subcommand(sub_command, memory_system, config_system);
+                self.execute_cassette_subcommand(sub_command, config_system, memory_system);
             },
             ParsedUserCommand::Config(sub_command) => {
-                self.execute_config_subcommand(sub_command, emulator, memory_system, config_system);
+                self.execute_config_subcommand(sub_command, config_system, runtime, memory_system);
             },
             ParsedUserCommand::CommandMissingParameter  { sup_command_name, sub_command_name, parameter_desc, parameter_desc_ia } => {
                 self.emulator_message(format!("The `{} {}' command requires {} {} parameter, see: /help {}", sup_command_name, sub_command_name, parameter_desc_ia, parameter_desc, sup_command_name).as_str());
@@ -811,7 +825,7 @@ impl UserInterface {
                 self.emulator_message("    show   <section>_<entry>           - shows the value of the given config entry.");
                 self.emulator_message("    change <section>_<entry> = <value> - changes the value of the given config entry.");
                 self.emulator_message("");
-                self.emulator_message("Invoking `config change' causes the configuration file to be updated, as well as applying the change, if possible.  Some configuration changes (namely use of hardware accelerated rendering) may need the emulator to be closed and re-opened for the change to take effect.");
+                self.emulator_message("Invoking `config change' causes the configuration file to be updated, as well as applying the change, if possible.");
             },
             HelpEntry::Alias { alias_name, aliased_name, help_entry } => {
                 self.emulator_message(format!("The `{}' command is an alias for `{}', see `/help {}' for more information.", alias_name, aliased_name, help_entry).as_str());
@@ -944,91 +958,31 @@ impl UserInterface {
         self.screen_lines = VecDeque::with_capacity(self.max_screen_lines);
         self.emulator_message("All messages cleared.");
     }
-    fn execute_machine_subcommand(&mut self, sub_command: MachineSubCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
+    fn execute_machine_subcommand(&mut self, sub_command: MachineSubCommand, runtime: &mut emulator::Runtime) {
         match sub_command {
             MachineSubCommand::Power { new_state } => {
-                if new_state == true {
-                    self.power_on_machine(emulator, memory_system);
-                } else {
-                    self.power_off_machine(emulator, memory_system);
-                }
+                runtime.power_desired = new_state;
             },
             MachineSubCommand::Reset { full_reset } => {
                 if full_reset == true {
-                    self.reset_machine_full(emulator, memory_system);
+                    runtime.reset_full_request = true;
                 } else {
-                    self.reset_machine(emulator, memory_system);
+                    runtime.reset_cpu_request = true;
                 }
             },
             MachineSubCommand::Pause(pause_type) => {
                 match pause_type {
                     PauseType::Pause => {
-                        self.pause_machine(emulator);
+                        runtime.pause_desired = true;
                     },
                     PauseType::Unpause => {
-                        self.unpause_machine(emulator);
+                        runtime.pause_desired = false;
                     },
                     PauseType::Toggle => {
-                        if emulator.paused {
-                            self.unpause_machine(emulator);
-                        } else {
-                            self.pause_machine(emulator);
-                        }
+                        runtime.pause_desired = !runtime.paused;
                     },
                 }
             },
-        }
-    }
-    fn power_off_machine(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
-        if !emulator.powered_on {
-            self.emulator_message("The machine is already powered off.");
-        } else {
-            emulator.power_off(memory_system);
-            self.collect_logged_messages(emulator, memory_system);
-            self.emulator_message("Machine powered off.");
-        }
-    }
-    fn power_on_machine(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
-        if emulator.powered_on {
-            self.emulator_message("The machine is already powered on.");
-        } else {
-            emulator.power_on(memory_system);
-            self.collect_logged_messages(emulator, memory_system);
-            self.emulator_message("Machine powered on.");
-        }
-    }
-    fn reset_machine_full(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
-        if emulator.powered_on {
-            emulator.full_reset(memory_system);
-            self.collect_logged_messages(emulator, memory_system);
-            self.emulator_message("Full system reset performed.");
-        } else {
-            self.emulator_message("Cannot reset a powered-off machine.");
-        }
-    }
-    fn reset_machine(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
-        if emulator.powered_on {
-            emulator.reset(memory_system);
-            self.collect_logged_messages(emulator, memory_system);
-            self.emulator_message("System reset performed.");
-        } else {
-            self.emulator_message("Cannot reset a powered-off machine.");
-        }
-    }
-    fn pause_machine(&mut self, emulator: &mut emulator::Emulator) {
-        if emulator.paused {
-            self.emulator_message("The machine emulation is already paused.");
-        } else {
-            emulator.paused = true;
-            self.emulator_message("Machine emulation paused.");
-        }
-    }
-    fn unpause_machine(&mut self, emulator: &mut emulator::Emulator) {
-        if !emulator.paused {
-            self.emulator_message("The machine emulation is already not paused.");
-        } else {
-            emulator.paused = false;
-            self.emulator_message("Machine emulation unpaused.");
         }
     }
     fn execute_memory_subcommand(&mut self, sub_command: MemorySubCommand, memory_system: &mut memory::MemorySystem) {
@@ -1059,7 +1013,7 @@ impl UserInterface {
             },
         }
     }
-    fn execute_cassette_subcommand(&mut self, sub_command: CassetteSubCommand, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+    fn execute_cassette_subcommand(&mut self, sub_command: CassetteSubCommand, config_system: &mut proj_config::ConfigSystem, memory_system: &mut memory::MemorySystem) {
         match sub_command {
             CassetteSubCommand::Insert { format, file } => {
                 if file.to_lowercase() == "none" {
@@ -1149,7 +1103,7 @@ impl UserInterface {
             },
         }
     }
-    fn execute_config_subcommand(&mut self, sub_command: ConfigSubCommand, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+    fn execute_config_subcommand(&mut self, sub_command: ConfigSubCommand, config_system: &mut proj_config::ConfigSystem, runtime: &mut emulator::Runtime, memory_system: &mut memory::MemorySystem) {
         match sub_command {
             ConfigSubCommand::List => {
                 let config_entries = match config_system.get_config_entry_current_state_all() {
@@ -1180,16 +1134,7 @@ impl UserInterface {
                         match apply_action {
                             proj_config::ConfigChangeApplyAction::RomChange(which) => {
                                 if which == memory_system.rom_choice {
-                                    let was_running = emulator.powered_on;
-                                    if was_running {
-                                        emulator.power_off(memory_system);
-                                    }
-                                    memory_system.rom_chip.wipe();
-                                    memory_system.load_system_rom(config_system);
-                                    if was_running {
-                                        emulator.power_on(memory_system);
-                                    }
-                                    self.emulator_message("System rom changed.");
+                                    runtime.update_rom_request = true;
                                 } else {
                                     self.emulator_message("Configuration updated.");
                                 }
@@ -1199,38 +1144,35 @@ impl UserInterface {
                                 self.emulator_message("Ram size changed.");
                             },
                             proj_config::ConfigChangeApplyAction::UpdateMsPerKeypress => {
-                                emulator.scheduler_update = true;
+                                runtime.scheduler_update = true;
                                 self.emulator_message("Miliseconds per keypress setting updated.");
                             },
                             proj_config::ConfigChangeApplyAction::ChangeWindowedResolution => {
-                                if !emulator.fullscreen {
-                                    emulator.resolution_update = true;
+                                if !runtime.fullscreen {
+                                    runtime.resolution_update = true;
                                     self.emulator_message("Windowed mode resolution changed.");
                                 } else {
                                     self.emulator_message("Configuration updated.");
                                 }
                             },
                             proj_config::ConfigChangeApplyAction::ChangeFullscreenResolution => {
-                                if emulator.fullscreen {
-                                    emulator.resolution_update = true;
+                                if runtime.fullscreen {
+                                    runtime.resolution_update = true;
                                     self.emulator_message("Fullscreen mode resolution changed.");
                                 } else {
                                     self.emulator_message("Configuration updated.");
                                 }
                             },
                             proj_config::ConfigChangeApplyAction::ChangeColor => {
-                                emulator.video_config_update = true;
+                                runtime.video_textures_update = true;
                                 self.emulator_message("Color settings updated.");
                             },
                             proj_config::ConfigChangeApplyAction::ChangeHwAccelUsage => {
-                                if config_system.config_items.video_use_hw_accel {
-                                    self.emulator_message("Hardware acceleration enabled, although closing and re-opening the emulator is required for this change to take effect.");
-                                } else {
-                                    self.emulator_message("Hardware acceleration disabled, although closing and re-opening the emulator is required for this change to take effect.");
-                                }
+                                runtime.video_system_update = true;
+                                self.emulator_message("Hardware acceleration usage setting changed.");
                             },
                             proj_config::ConfigChangeApplyAction::ChangeCharacterGenerator => {
-                                emulator.video_config_update = true;
+                                runtime.video_textures_update = true;
                                 self.emulator_message("Character generator changed.");
                             },
                             proj_config::ConfigChangeApplyAction::ChangeLowercaseModUsage => {
@@ -1269,7 +1211,7 @@ impl UserInterface {
             },
         }
     }
-    fn send_to_console(&mut self, _input_str: String, _emulator: &mut emulator::Emulator) {
+    fn send_to_console(&mut self, _input_str: String, _devices: &mut emulator::Devices) {
         self.emulator_message("Serial console interface not yet implemented.");
     }
     pub fn add_screen_line(&mut self, line_content: String, line_type: ScreenLineType) {
@@ -1526,7 +1468,7 @@ impl UserInterface {
             self.redraw_needed = true;
         }
     }
-    fn prompt_handle_enter_key(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem) {
+    fn prompt_handle_enter_key(&mut self, config_system: &mut proj_config::ConfigSystem, runtime: &mut emulator::Runtime, devices: &mut emulator::Devices, memory_system: &mut memory::MemorySystem) {
         let entered_text = match self.prompt_history_pos {
             0 => { self.prompt_text.clone() },
             _ => { self.prompt_history[self.prompt_history_pos - 1].clone() },
@@ -1543,12 +1485,12 @@ impl UserInterface {
             let (_, command_str) = entered_text.as_str().split_at(1);
 
             if (command_str.len() > 0) && (command_str.chars().next().expect(".expect() call: Somehow there isn't a first character even though command_str.len() > 0 evaluated to true") == '/') {
-                 self.send_to_console(command_str.to_owned(), emulator);
+                 self.send_to_console(command_str.to_owned(), devices);
             } else {
-                self.execute_command(command_str, emulator, memory_system, config_system);
+                self.execute_command(command_str, config_system, runtime, memory_system);
             }
         } else {
-            self.send_to_console(entered_text, emulator);
+            self.send_to_console(entered_text, devices);
         }
     }
     fn prompt_add_to_history(&mut self, to_add: &str) {
@@ -1565,10 +1507,13 @@ impl UserInterface {
         self.prompt_history.truncate(self.prompt_history_max_entries - 1);
         self.prompt_history.push_front(to_add.to_owned());
     }
-    pub fn collect_logged_messages(&mut self, emulator: &mut emulator::Emulator, memory_system: &mut memory::MemorySystem) {
+    pub fn collect_logged_messages(&mut self,
+                                   runtime: &mut emulator::Runtime,
+                                   devices: &mut emulator::Devices,
+                                   memory_system: &mut memory::MemorySystem) {
 
-        if emulator.messages_available() {
-            for message in emulator.collect_messages() {
+        if devices.messages_available() {
+            for message in devices.collect_messages() {
                 self.emulator_message(message.as_str());
             }
         }
@@ -1578,10 +1523,26 @@ impl UserInterface {
                 self.emulator_message(message.as_str());
             }
         }
+
+        if runtime.messages_available() {
+            for message in runtime.collect_messages() {
+                self.emulator_message(message.as_str());
+            }
+        }
     }
-    pub fn update_screen(&mut self, emulator: &emulator::Emulator) {
+    pub fn update_screen(&mut self,
+                         runtime: &emulator::Runtime,
+                         devices: &emulator::Devices) {
+
         if self.redraw_needed
-            || self.status_displayed_halted != emulator.cpu.halted {
+            || self.status_displayed_halted != devices.cpu.halted
+            || self.status_displayed_powered_on != runtime.powered_on
+            || self.status_displayed_paused != runtime.paused {
+
+            // Update cached values:
+            self.status_displayed_halted = devices.cpu.halted;
+            self.status_displayed_powered_on = runtime.powered_on;
+            self.status_displayed_paused = runtime.paused;
 
             self.window.erase();
 
@@ -1590,7 +1551,7 @@ impl UserInterface {
                 self.window.printw(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH).as_ref());
             } else {
                 self.render_lines();
-                self.render_status_strips(emulator);
+                self.render_status_strips();
                 self.render_prompt();
             }
 
@@ -1714,10 +1675,7 @@ impl UserInterface {
             }
         }
     }
-    fn render_status_strips(&mut self, emulator: &emulator::Emulator) {
-
-        // Update the cached values:
-        self.status_displayed_halted = emulator.cpu.halted;
+    fn render_status_strips(&mut self) {
 
         // Color the strips:
         self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
@@ -1739,7 +1697,7 @@ impl UserInterface {
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
         self.window.attron(pancurses::A_BOLD);
-        if emulator.powered_on {
+        if self.status_displayed_powered_on {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
             self.window.printw("power on");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
@@ -1754,7 +1712,7 @@ impl UserInterface {
         self.window.printw("]");
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
-        if emulator.powered_on || emulator.paused {
+        if self.status_displayed_powered_on || self.status_displayed_paused {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
             self.window.printw(" ");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
@@ -1763,11 +1721,11 @@ impl UserInterface {
             self.window.printw("[");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
-            if emulator.paused {
+            if self.status_displayed_paused {
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
                 self.window.printw("paused");
                 self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
-            } else if emulator.cpu.halted {
+            } else if self.status_displayed_halted {
                 self.window.attron(pancurses::A_BOLD);
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
                 self.window.printw("halted");

@@ -21,220 +21,147 @@ use memory;
 use memory::MemoryChipOps;
 use keyboard;
 use video;
-use fonts;
 use timing;
 use user_interface;
 use util;
 use util::MessageLogging;
 
 
-pub struct Emulator {
-    pub cpu:                  cpu::CPU,
-    input_system:             keyboard::InputSystem,
-    video_system:             video::VideoSystem,
-
-    pub fullscreen:           bool,
-    pub powered_on:           bool,
-    pub paused:               bool,
-    pub exit_request:         bool,
-    pub video_config_update:  bool,
-    pub resolution_update:    bool,
-    pub scheduler_update:     bool,
+pub struct Devices {
+    pub cpu:        cpu::CPU,
+    pub keyboard:   keyboard::Keyboard,
 }
 
-impl Emulator {
-    pub fn new(config_items: &proj_config::ConfigItems, _startup_logger: &mut util::StartupLogger) -> Emulator {
-
-        let (red, green, blue) = config_items.video_bg_color;
-        let bg_color = Emulator::rgb888_into_rgb332(red, green, blue);
-
-        let (red, green, blue) = config_items.video_fg_color;
-        let fg_color = Emulator::rgb888_into_rgb332(red, green, blue);
-
-        let font = Emulator::font_for_character_generator(config_items.video_character_generator);
-
-        Emulator {
-            cpu:                 cpu::CPU::new(),
-            input_system:        keyboard::InputSystem::new(),
-            video_system:        video::VideoSystem::new(bg_color, fg_color, font),
-            fullscreen:          false,
-            powered_on:          false,
-            paused:              false,
-            exit_request:        false,
-            video_config_update: false,
-            resolution_update:   false,
-            scheduler_update:    false,
+impl Devices {
+    pub fn new() -> Devices {
+        Devices {
+            cpu:       cpu::CPU::new(),
+            keyboard:  keyboard::Keyboard::new(),
         }
     }
-    fn rgb888_into_rgb332(red: u8, green: u8, blue: u8) -> u8 {
-        (red    & 0b111_000_00) |
-        ((green & 0b111_000_00) >> 3) |
-        ((blue  & 0b110_000_00) >> 6)
+}
+
+impl MessageLogging for Devices {
+    fn log_message(&mut self, _message: String) {
+        unreachable!();
     }
-    fn font_for_character_generator(character_generator: u32) -> fonts::FontSelector {
-        match character_generator {
-            1 => { fonts::FontSelector::CG0 },
-            2 => { fonts::FontSelector::CG1 },
-            3 => { fonts::FontSelector::CG2 },
-            _ => { panic!("Invalid character generator selected"); },
+    fn messages_available(&self) -> bool {
+        self.cpu.messages_available()
+            || self.keyboard.messages_available()
+    }
+    fn collect_messages(&mut self) -> Vec<String> {
+        let mut logged_thus_far: Vec<String> = self.cpu.collect_messages();
+        logged_thus_far.append(&mut self.keyboard.collect_messages());
+
+        logged_thus_far
+    }
+}
+
+
+pub struct Runtime {
+    pub fullscreen:             bool,
+    pub powered_on:             bool,
+    pub paused:                 bool,
+
+    pub curses_exit_request:    bool,
+    pub sdl_exit_request:       bool,
+    pub reset_cpu_request:      bool,
+    pub reset_full_request:     bool,
+    pub update_rom_request:     bool,
+
+    pub fullscreen_desired:     bool,
+    pub power_desired:          bool,
+    pub pause_desired:          bool,
+
+    pub video_system_update:    bool,
+    pub video_textures_update:  bool,
+    pub resolution_update:      bool,
+    pub scheduler_update:       bool,
+
+
+    logged_messages:  Vec<String>,
+    messages_present: bool,
+}
+
+impl Runtime {
+    pub fn new() -> Runtime {
+        Runtime {
+            fullscreen:             false,
+            powered_on:             false,
+            paused:                 false,
+
+            curses_exit_request:    false,
+            sdl_exit_request:       false,
+            reset_cpu_request:      false,
+            reset_full_request:     false,
+            update_rom_request:     false,
+
+            fullscreen_desired:     false,
+            power_desired:          false,
+            pause_desired:          false,
+
+            video_system_update:    false,
+            video_textures_update:  false,
+            resolution_update:      false,
+            scheduler_update:       false,
+
+
+            logged_messages:  Vec::new(),
+            messages_present: false,
         }
     }
-    // Runs the emulator; returns whether to ask for the user to press Enter
-    // to close the program on Windows.
-    pub fn run(&mut self, memory_system: &mut memory::MemorySystem, config_system: &mut proj_config::ConfigSystem, mut startup_logger: util::StartupLogger) -> bool {
-        let mut in_desktop_fsm:  bool;
 
-        // Initialize SDL:
-        let sdl = sdl2::init().expect(".expect() call: Failed to initialize SDL2");
-        let video = sdl.video().expect(".expect() call: Failed to initialize the SDL2 video subsystem");
-        let mut event_pump = sdl.event_pump().expect(".expect() call: Failed to initialize the SDL2 event pump");
-        sdl.mouse().show_cursor(false);
+    fn handle_updates(&mut self,
+                      config_system: &mut proj_config::ConfigSystem,
+                      scheduler: &mut timing::Scheduler,
+                      devices: &mut Devices,
+                      memory_system: &mut memory::MemorySystem) {
 
-        // Create a rendering context:
-        let (width, height) = config_system.config_items.video_windowed_resolution;
-        let mut window_builder = video.window("trs80m1-rs", width, height);
-        let window = window_builder.position_centered().build().expect(".expect() call: Failed to create the SDL2 window");
-
-        let mut renderer: sdl2::render::Renderer;
-        let ns_per_frame: u32;
-        if config_system.config_items.video_use_hw_accel {
-            match window.display_mode() {
-                Ok(mode) => {
-                    renderer = window.renderer().accelerated().present_vsync().build().expect(".expect() call: Failed to create an accelerated SDL2 renderer with vsync");
-                    let fallback_refresh_rate = (mode.refresh_rate as u32) + 10;
-                    ns_per_frame = 1_000_000_000 / fallback_refresh_rate;
-                    startup_logger.log_message(format!("SDL reports a display refresh rate of {}Hz; using vsync, setting software fallback framerate throttle to {} FPS.", mode.refresh_rate, fallback_refresh_rate));
-                },
-                Err(err) => {
-                    startup_logger.log_message(format!("Failed to get the display mode: {}.", err));
-                    startup_logger.log_message("Assuming that vsync doesn't work.".to_owned());
-                    renderer = window.renderer().accelerated().build().expect(".expect() call: Failed to create an accelerated SDL2 renderer without vsync");
-                    ns_per_frame = timing::NS_PER_FRAME;
-                },
-            }
-        } else {
-            startup_logger.log_message("Using the software rendering mode.".to_owned());
-            renderer = window.renderer().software().build().expect(".expect() call: Failed to create a non-accelerated SDL2 renderer");
-            ns_per_frame = timing::NS_PER_FRAME;
+        if self.reset_cpu_request {
+            self.reset_cpu(devices, memory_system);
         }
-        renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT).expect(".expect() call: Failed to set the SDL2 renderer's logical size");
-        in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
-
-        startup_logger.log_message("Switching to the curses-based user interface.".to_owned());
-        let mut user_interface = match user_interface::UserInterface::new() {
-            Some(user_interface) => {
-                user_interface
-            },
-            None => {
-                eprintln!("Starting the curses-based user interface failed.");
-                return true;
-            },
-        };
-        user_interface.consume_startup_logger(startup_logger);
-
-        // Generate textures for the screen glyphs:
-        let (mut narrow_glyphs, mut wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
-
-        self.full_reset(memory_system);
-        let mut timer = timing::FrameTimer::new(ns_per_frame, timing::NS_PER_CPU_CYCLE);
-        let mut scheduler = timing::Scheduler::new(config_system);
-        loop {
-            let frame_cycles = timer.frame_cycles();
-
-            self.input_system.handle_events(&mut self.exit_request, &mut event_pump);
-            if self.exit_request { return false; }
-            if self.input_system.reset_request {
-                user_interface.execute_command("machine reset full", self, memory_system, config_system);
-                self.input_system.reset_request = false;
+        if self.reset_full_request {
+            self.reset_full(devices, memory_system);
+        }
+        if self.update_rom_request {
+            self.update_rom(config_system, devices, memory_system);
+        }
+        if self.power_desired != self.powered_on {
+            if self.power_desired {
+                self.power_on(devices, memory_system);
+            } else {
+                self.power_off(devices, memory_system);
             }
-            if self.input_system.pause_request {
-                user_interface.execute_command("machine pause toggle", self, memory_system, config_system);
-                self.input_system.pause_request = false;
+        }
+        if self.pause_desired != self.paused {
+            if self.pause_desired {
+                self.pause();
+            } else {
+                self.unpause();
             }
-
-            user_interface.handle_user_input(self, memory_system, config_system);
-            if self.exit_request { return true; }
-
-            if self.video_config_update {
-                let (red, green, blue) = config_system.config_items.video_bg_color;
-                let bg_color = Emulator::rgb888_into_rgb332(red, green, blue);
-
-                let (red, green, blue) = config_system.config_items.video_fg_color;
-                let fg_color = Emulator::rgb888_into_rgb332(red, green, blue);
-
-                let font = Emulator::font_for_character_generator(config_system.config_items.video_character_generator);
-                self.video_system.update_colors_and_font(bg_color, fg_color, font);
-
-                let (new_narrow_glyphs, new_wide_glyphs) = self.video_system.generate_glyph_textures(&mut renderer);
-                narrow_glyphs = new_narrow_glyphs;
-                wide_glyphs = new_wide_glyphs;
-
-                self.video_config_update = false;
-            }
-            if self.resolution_update {
-                if self.fullscreen && !in_desktop_fsm {
-                    let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen resolution");
-                    let (width, height) = config_system.config_items.video_fullscreen_resolution;
-                    window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
-                } else if !self.fullscreen {
-                    let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the windowed resolution");
-                    let (width, height) = config_system.config_items.video_windowed_resolution;
-                    window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
-                }
-                self.resolution_update = false;
-            }
-            if self.scheduler_update {
-                scheduler.update(config_system);
-                self.scheduler_update = false;
-            }
-            if memory_system.cas_rec.config_update_request {
-                memory_system.cas_rec.handle_config_update_request(config_system);
-            }
-            if self.powered_on && !self.paused {
-                scheduler.perform_cycles(frame_cycles,
-                                         &mut self.cpu,
-                                         &mut self.input_system,
-                                         memory_system);
-            }
-            user_interface.collect_logged_messages(self, memory_system);
-            user_interface.update_screen(&self);
-
-            // Handle fullscreen requests:
-            if self.input_system.fullscreen_request ^ self.fullscreen {
-                let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen status");
-                match self.input_system.fullscreen_request {
-                    true => {
-                        in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
-
-                        if !in_desktop_fsm {
-                            let (width, height) = config_system.config_items.video_fullscreen_resolution;
-                            window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to fullscreen");
-                            window.set_fullscreen(sdl2::video::FullscreenType::True).expect(".expect() call: Failed to set the SDL2 window to true fullscreen");
-                        } else {
-                            window.set_fullscreen(sdl2::video::FullscreenType::Desktop).expect(".expect() call: Failed to set the SDL2 window to desktop fullscreen");
-                        }
-                    },
-                    false => {
-                        window.set_fullscreen(sdl2::video::FullscreenType::Off).expect(".expect() call: Failed to set the SDL2 window to windowed mode.");
-                        let (width, height) = config_system.config_items.video_windowed_resolution;
-                        window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to windowed mode");
-                        window.set_position(sdl2::video::WindowPos::Centered, sdl2::video::WindowPos::Centered);
-                    }
-                }
-                self.fullscreen = self.input_system.fullscreen_request;
-            }
-
-            self.video_system.render(&mut renderer, &narrow_glyphs, &wide_glyphs, memory_system);
-
-            timer.frame_next();
+        }
+        if memory_system.cas_rec.config_update_request {
+            memory_system.cas_rec.handle_config_update_request(config_system);
+        }
+        if self.scheduler_update {
+            scheduler.update(config_system);
+            self.scheduler_update = false;
         }
     }
-    pub fn power_on(&mut self, _memory_system: &mut memory::MemorySystem) {
-        self.cpu.full_reset();
+    fn power_on(&mut self, devices: &mut Devices, memory_system: &mut memory::MemorySystem) {
+        self.power_on_perform(devices, memory_system);
+        self.log_message("Machine powered on.".to_owned());
+    }
+    fn power_off(&mut self, devices: &mut Devices, memory_system: &mut memory::MemorySystem) {
+        self.power_off_perform(devices, memory_system);
+        self.log_message("Machine powered off.".to_owned());
+    }
+    fn power_on_perform(&mut self, devices: &mut Devices, _memory_system: &mut memory::MemorySystem) {
+        devices.cpu.full_reset();
         self.powered_on = true;
     }
-    pub fn power_off(&mut self, memory_system: &mut memory::MemorySystem) {
-        self.cpu.power_off();
+    fn power_off_perform(&mut self, devices: &mut Devices, memory_system: &mut memory::MemorySystem) {
+        devices.cpu.power_off();
 
         memory_system.ram_chip.wipe();
         memory_system.vid_mem.power_off();
@@ -242,32 +169,427 @@ impl Emulator {
 
         memory_system.nmi_request = false;
         memory_system.int_request = false;
-        
+
         self.powered_on = false;
     }
-    pub fn reset(&mut self, _memory_system: &mut memory::MemorySystem) {
-        self.cpu.reset();
+    fn pause(&mut self) {
+        self.paused = true;
+        self.log_message("Emulation paused.".to_owned());
     }
-    pub fn full_reset(&mut self, memory_system: &mut memory::MemorySystem) {
-        self.power_off(memory_system);
-        self.power_on(memory_system);
+    fn unpause(&mut self) {
+        self.paused = false;
+        self.log_message("Emulation unpaused.".to_owned());
+    }
+    fn reset_cpu(&mut self, devices: &mut Devices, _memory_system: &mut memory::MemorySystem) {
+        if self.powered_on {
+            devices.cpu.reset();
+            self.log_message("CPU reset performed.".to_owned());
+        } else {
+            self.log_message("Cannot reset a powered-off machine.".to_owned());
+        }
+        self.reset_cpu_request = false;
+    }
+    fn reset_full(&mut self, devices: &mut Devices, memory_system: &mut memory::MemorySystem) {
+        if self.powered_on {
+            self.power_off_perform(devices, memory_system);
+            self.power_on_perform(devices, memory_system);
+
+            self.log_message("Full system reset performed.".to_owned());
+        } else {
+            self.log_message("Cannot reset a powered-off machine.".to_owned());
+        }
+        self.reset_full_request = false;
+    }
+    fn update_rom(&mut self,
+                  config_system: &proj_config::ConfigSystem,
+                  devices: &mut Devices,
+                  memory_system: &mut memory::MemorySystem) {
+
+        let was_running = self.powered_on;
+        if was_running {
+            self.power_off_perform(devices, memory_system);
+        }
+        memory_system.rom_chip.wipe();
+        memory_system.load_system_rom(config_system);
+        if was_running {
+            self.power_on_perform(devices, memory_system);
+        }
+
+        self.log_message("System rom changed.".to_owned());
+        self.update_rom_request = false;
+    }
+    fn handle_updates_video(&mut self,
+                            config_system: &proj_config::ConfigSystem,
+                            in_desktop_fsm: &mut bool,
+                            renderer: &mut sdl2::render::Renderer) {
+
+        if self.fullscreen_desired != self.fullscreen {
+            let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen status");
+            if self.fullscreen_desired {
+                *in_desktop_fsm = config_system.config_items.video_desktop_fullscreen_mode;
+
+                if !*in_desktop_fsm {
+                    let (width, height) = config_system.config_items.video_fullscreen_resolution;
+                    window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to fullscreen");
+                    window.set_fullscreen(sdl2::video::FullscreenType::True).expect(".expect() call: Failed to set the SDL2 window to true fullscreen");
+                } else {
+                    window.set_fullscreen(sdl2::video::FullscreenType::Desktop).expect(".expect() call: Failed to set the SDL2 window to desktop fullscreen");
+                }
+
+                self.fullscreen = true;
+
+            } else {
+                window.set_fullscreen(sdl2::video::FullscreenType::Off).expect(".expect() call: Failed to set the SDL2 window to windowed mode.");
+                let (width, height) = config_system.config_items.video_windowed_resolution;
+                window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size when going to windowed mode");
+                window.set_position(sdl2::video::WindowPos::Centered, sdl2::video::WindowPos::Centered);
+
+                self.fullscreen = false;
+            }
+        }
+
+        if self.resolution_update {
+            if self.fullscreen && !*in_desktop_fsm {
+                let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the fullscreen resolution");
+                let (width, height) = config_system.config_items.video_fullscreen_resolution;
+                window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
+            } else if !self.fullscreen {
+                let window = renderer.window_mut().expect(".expect() call: Failed to get a mutable reference to the SDL2 window for the purpose of changing the windowed resolution");
+                let (width, height) = config_system.config_items.video_windowed_resolution;
+                window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
+            }
+            self.resolution_update = false;
+        }
+    }
+    // Run the emulator with a hardware accelerated rendering context.
+    pub fn run_hw_accel(&mut self,
+                         config_system:   &mut proj_config::ConfigSystem,
+                         user_interface:  &mut user_interface::UserInterface,
+                         scheduler:       &mut timing::Scheduler,
+                         devices:         &mut Devices,
+                         memory_system:   &mut memory::MemorySystem,
+                         video_context:   &mut sdl2::VideoSubsystem,
+                         event_pump:      &mut sdl2::EventPump) -> bool {
+
+        let (width, height) = config_system.config_items.video_windowed_resolution;
+        let mut window_builder = video_context.window("trs80m1-rs", width, height);
+        let window = match window_builder.position_centered().build() {
+            Ok(window) => { window },
+            Err(error) => {
+                self.log_message(format!("Failed to create a window for the video output: {}.", error));
+                return false;
+            },
+        };
+        self.fullscreen = false;
+
+        let (renderer_result, ns_per_frame) = match window.display_mode() {
+            Ok(mode) => {
+                if mode.refresh_rate == 0 {
+
+                    self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
+                    (window.renderer().accelerated().build(), timing::NS_PER_FRAME)
+
+                } else {
+
+                    let fallback_refresh_rate = (mode.refresh_rate as u32) + 10;
+                    let ns_per_frame = 1_000_000_000 / fallback_refresh_rate;
+                    self.log_message(format!("SDL reports a display refresh rate of {}Hz; using vsync, setting software fallback framerate throttle to {} FPS.", mode.refresh_rate, fallback_refresh_rate));
+
+                    (window.renderer().accelerated().present_vsync().build(), ns_per_frame)
+                }
+            },
+            Err(err) => {
+                self.log_message(format!("Failed to get the display mode: {}.", err));
+                self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
+
+                (window.renderer().accelerated().build(), timing::NS_PER_FRAME)
+            },
+        };
+
+        let mut renderer = match renderer_result {
+            Ok(renderer) => { renderer },
+            Err(error) => {
+                self.log_message(format!("Failed to create a hardware accelerated rendering context: {}.", error));
+                return false;
+            },
+        };
+
+        match renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT) {
+            Ok(..) => { () },
+            Err(error) => {
+                self.log_message(format!("Failed to set the SDL2 renderer's logical size: {}.", error));
+                return false;
+            },
+        }
+
+        let mut in_desktop_fsm = false;
+
+        while !self.curses_exit_request
+              && !self.sdl_exit_request
+              && !self.video_system_update {
+
+            let (narrow_glyphs, wide_glyphs) = video::generate_glyph_textures(config_system, &mut renderer);
+            self.video_textures_update = false;
+
+            self.run_with_video(config_system, user_interface, scheduler, devices, memory_system,
+                                &mut renderer, &narrow_glyphs, &wide_glyphs,
+                                event_pump, &mut in_desktop_fsm, ns_per_frame);
+        }
+        true
+    }
+    // Run the emulator with a non-hardware-accelerated rendering context.
+    pub fn run_sw_render(&mut self,
+                         config_system:   &mut proj_config::ConfigSystem,
+                         user_interface:  &mut user_interface::UserInterface,
+                         scheduler:       &mut timing::Scheduler,
+                         devices:         &mut Devices,
+                         memory_system:   &mut memory::MemorySystem,
+                         video_context:   &mut sdl2::VideoSubsystem,
+                         event_pump:      &mut sdl2::EventPump) -> bool {
+
+        let (width, height) = config_system.config_items.video_windowed_resolution;
+        let mut window_builder = video_context.window("trs80m1-rs", width, height);
+        let window = match window_builder.position_centered().build() {
+            Ok(window) => { window },
+            Err(error) => {
+                self.log_message(format!("Failed to create a window for the video output: {}.", error));
+                return false;
+            },
+        };
+        self.fullscreen = false;
+
+        let mut renderer = match window.renderer().software().build() {
+            Ok(renderer) => { renderer },
+            Err(error) => {
+                self.log_message(format!("Failed to create a non-hardware-accelerated rendering context: {}.", error));
+                return false;
+            },
+        };
+
+        match renderer.set_logical_size(video::SCREEN_WIDTH, video::SCREEN_HEIGHT) {
+            Ok(..) => { () },
+            Err(error) => {
+                self.log_message(format!("Failed to set the SDL2 renderer's logical size: {}.", error));
+                return false;
+            },
+        }
+
+        let mut in_desktop_fsm = false;
+
+        while !self.curses_exit_request
+              && !self.sdl_exit_request
+              && !self.video_system_update {
+
+            let (narrow_glyphs, wide_glyphs) = video::generate_glyph_textures(config_system, &mut renderer);
+            self.video_textures_update = false;
+
+            self.run_with_video(config_system, user_interface, scheduler, devices, memory_system,
+                                &mut renderer, &narrow_glyphs, &wide_glyphs,
+                                event_pump, &mut in_desktop_fsm, timing::NS_PER_FRAME);
+        }
+        true
+    }
+    fn run_with_video(&mut self,
+                      config_system:   &mut proj_config::ConfigSystem,
+                      user_interface:  &mut user_interface::UserInterface,
+                      scheduler:       &mut timing::Scheduler,
+                      devices:         &mut Devices,
+                      memory_system:   &mut memory::MemorySystem,
+
+                      renderer:        &mut sdl2::render::Renderer,
+                      narrow_glyphs:   &Box<[sdl2::render::Texture]>,
+                      wide_glyphs:     &Box<[sdl2::render::Texture]>,
+                      event_pump:      &mut sdl2::EventPump,
+                      in_desktop_fsm:  &mut bool,
+                      ns_per_frame:    u32) {
+
+        let mut timer = timing::FrameTimer::new(ns_per_frame, timing::NS_PER_CPU_CYCLE);
+
+        while !self.curses_exit_request
+              && !self.sdl_exit_request
+              && !self.video_system_update
+              && !self.video_textures_update {
+
+            let frame_cycles = timer.frame_cycles();
+
+            devices.keyboard.handle_events(self, event_pump);
+            user_interface.handle_user_input(config_system, self, devices, memory_system);
+            self.handle_updates(config_system, scheduler, devices, memory_system);
+            self.handle_updates_video(config_system, in_desktop_fsm, renderer);
+
+            if self.powered_on && !self.paused {
+                scheduler.perform_cycles(frame_cycles, devices, memory_system);
+            }
+
+            user_interface.collect_logged_messages(self, devices, memory_system);
+            user_interface.update_screen(&self, &devices);
+
+            video::render(renderer, narrow_glyphs, wide_glyphs, memory_system);
+            timer.frame_next();
+        }
+    }
+    pub fn run_without_video(&mut self,
+                             config_system:   &mut proj_config::ConfigSystem,
+                             user_interface:  &mut user_interface::UserInterface,
+                             scheduler:       &mut timing::Scheduler,
+                             devices:         &mut Devices,
+                             memory_system:   &mut memory::MemorySystem) {
+
+        let mut timer = timing::FrameTimer::new(timing::NS_PER_FRAME, timing::NS_PER_CPU_CYCLE);
+
+        while !self.curses_exit_request {
+            let frame_cycles = timer.frame_cycles();
+
+            user_interface.handle_user_input(config_system, self, devices, memory_system);
+            self.handle_updates(config_system, scheduler, devices, memory_system);
+
+            if self.powered_on && !self.paused {
+                scheduler.perform_cycles(frame_cycles, devices, memory_system);
+            }
+
+            user_interface.collect_logged_messages(self, devices, memory_system);
+            user_interface.update_screen(&self, &devices);
+
+            timer.frame_next();
+        }
     }
 }
 
-impl MessageLogging for Emulator {
-    fn log_message(&mut self, _message: String) {
-        unreachable!();
+impl MessageLogging for Runtime {
+    fn log_message(&mut self, message: String) {
+        self.logged_messages.push(message);
+        self.messages_present = true;
     }
     fn messages_available(&self) -> bool {
-        self.cpu.messages_available()
-            || self.input_system.messages_available()
-            || self.video_system.messages_available()
+        self.messages_present
     }
     fn collect_messages(&mut self) -> Vec<String> {
-        let mut logged_thus_far: Vec<String> = self.cpu.collect_messages();
-        logged_thus_far.append(&mut self.input_system.collect_messages());
-        logged_thus_far.append(&mut self.video_system.collect_messages());
+        let logged_thus_far = self.logged_messages.drain(..).collect();
+        self.messages_present = false;
 
         logged_thus_far
     }
+}
+
+
+
+pub enum ExitType {
+    AskForEnterOnWindows(i32),
+    JustExit(i32),
+}
+
+pub fn run(mut config_system:   proj_config::ConfigSystem,
+           mut startup_logger:  util::StartupLogger,
+           selected_rom:        u32) -> ExitType {
+
+    let mut memory_system = match memory::MemorySystem::new(&config_system, &mut startup_logger, selected_rom) {
+        Some(system) => { system },
+        None => {
+            eprintln!("Failed to initialize the emulator's memory system.");
+            return ExitType::AskForEnterOnWindows(1);
+        },
+    };
+
+    let mut scheduler = timing::Scheduler::new(&config_system);
+    let mut devices   = Devices::new();
+    let mut runtime   = Runtime::new();
+
+    startup_logger.log_message("Switching to the curses-based user interface.".to_owned());
+    let mut user_interface = match user_interface::UserInterface::new() {
+        Some(user_interface) => {
+            user_interface
+        },
+        None => {
+            eprintln!("Starting the curses-based user interface failed.");
+            return ExitType::AskForEnterOnWindows(1);
+        },
+    };
+    user_interface.consume_startup_logger(startup_logger);
+    runtime.power_desired = true;
+
+    match sdl2::init() {
+        Ok(sdl2_context) => {
+
+            match sdl2_context.video() {
+                Ok(mut video_context) => {
+
+                    match sdl2_context.event_pump() {
+                        Ok(mut event_pump) => {
+
+                            sdl2_context.mouse().show_cursor(false);
+                            loop {
+                                let mut use_hw_accel = config_system.config_items.video_use_hw_accel;
+                                let mut use_video = true;
+                                runtime.video_system_update = false;
+
+                                if use_hw_accel {
+                                    runtime.log_message("Using the hardware accelerated rendering mode.".to_owned());
+                                    use_hw_accel = runtime.run_hw_accel(&mut config_system,
+                                                                        &mut user_interface,
+                                                                        &mut scheduler,
+                                                                        &mut devices,
+                                                                        &mut memory_system,
+                                                                        &mut video_context,
+                                                                        &mut event_pump);
+                                    if !use_hw_accel {
+                                        runtime.log_message("Falling back to using software rendering".to_owned());
+                                    }
+                                }
+                                if !use_hw_accel {
+                                    runtime.log_message("Using the software rendering mode.".to_owned());
+                                    use_video = runtime.run_sw_render(&mut config_system,
+                                                                      &mut user_interface,
+                                                                      &mut scheduler,
+                                                                      &mut devices,
+                                                                      &mut memory_system,
+                                                                      &mut video_context,
+                                                                      &mut event_pump);
+
+                                    if !use_video {
+                                        runtime.log_message("Falling back to not outputting any video.".to_owned());
+                                    }
+                                }
+                                if !use_video {
+                                    runtime.log_message("Running without any video output.".to_owned());
+                                    runtime.run_without_video(&mut config_system,
+                                                              &mut user_interface,
+                                                              &mut scheduler,
+                                                              &mut devices,
+                                                              &mut memory_system);
+                                }
+
+                                if runtime.sdl_exit_request {
+                                    return ExitType::JustExit(0);
+                                }
+                                if runtime.curses_exit_request {
+                                    return ExitType::AskForEnterOnWindows(0);
+                                }
+                            }
+                        },
+                        Err(error) => {
+                            runtime.log_message(format!("Failed to initialize the SDL2 event pump: {}.", error));
+                        },
+                    }
+                },
+                Err(error) => {
+                    runtime.log_message(format!("Failed to initialize the SDL2 video subsystem: {}.", error));
+                },
+            }
+        },
+        Err(error) => {
+            runtime.log_message(format!("Failed to initialize SDL2: {}.", error));
+        }
+    }
+
+    runtime.log_message("Falling back to not outputting any video.".to_owned());
+
+    while !runtime.curses_exit_request && !runtime.sdl_exit_request {
+        runtime.run_without_video(&mut config_system,
+                                  &mut user_interface,
+                                  &mut scheduler,
+                                  &mut devices,
+                                  &mut memory_system);
+    }
+
+    ExitType::AskForEnterOnWindows(0)
 }

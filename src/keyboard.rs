@@ -16,6 +16,7 @@
 use std::collections::VecDeque;
 use std::collections::HashMap;
 
+use emulator;
 use memory;
 use sdl2;
 use util::MessageLogging;
@@ -453,16 +454,12 @@ fn new_redundant_key_map() -> HashMap<i32, RedundantKeyDesc> {
     map
 }
 
-pub struct InputSystem {
+pub struct Keyboard {
     queue:                   VecDeque<KeyboardQueueEntry>,
 
     key_map:                 HashMap<i32, KeyDesc>,
     redundant_key_map:       HashMap<i32, RedundantKeyDesc>,
     redundant_key_ctl:       [RedundantKeyControl; 16],
-
-    pub reset_request:       bool,
-    pub pause_request:       bool,
-    pub fullscreen_request:  bool,
 
     logged_messages:         Vec<String>,
     messages_present:        bool,
@@ -479,9 +476,9 @@ fn add_keyboard_event(queue: &mut VecDeque<KeyboardQueueEntry>,
     }
 }
 
-impl InputSystem {
-    pub fn new() -> InputSystem {
-        InputSystem {
+impl Keyboard {
+    pub fn new() -> Keyboard {
+        Keyboard {
             queue:                VecDeque::with_capacity(4096),
 
             key_map:              new_key_map(),
@@ -491,17 +488,13 @@ impl InputSystem {
                                       right_key_pressed: false,
                                   }; 16],
 
-            reset_request:        false,
-            pause_request:        false,
-            fullscreen_request:   false,
-
             logged_messages:      Vec::new(),
             messages_present:     false,
         }
     }
 
     // Handle SDL events.
-    pub fn handle_events(&mut self, exit_request: &mut bool,
+    pub fn handle_events(&mut self, runtime: &mut emulator::Runtime,
                          event_pump: &mut sdl2::EventPump) {
 
         for event in event_pump.poll_iter() {
@@ -519,18 +512,18 @@ impl InputSystem {
 
                                     // F4 (un)pauses the emulated machine
                                     sdl2::keyboard::Scancode::F4 => {
-                                        self.pause_request = true;
+                                        runtime.pause_desired = !runtime.paused;
                                     },
 
                                     // F5 reboots the emulated machine
                                     sdl2::keyboard::Scancode::F5 => {
-                                        self.reset_request = true;
+                                        runtime.reset_full_request = true;
                                     },
 
 
                                     // F11 toggles the full-screen mode
                                     sdl2::keyboard::Scancode::F11 => {
-                                        self.fullscreen_request = !self.fullscreen_request;
+                                        runtime.fullscreen_desired = !runtime.fullscreen;
                                     },
 
                                     // General key handling:
@@ -653,7 +646,7 @@ impl InputSystem {
                     }
                 },
                 sdl2::event::Event::Quit {..} => {
-                    *exit_request = true;
+                    runtime.sdl_exit_request = true;
                 },
                 // Ignore any unrecognized events.
                 _ => { },
@@ -662,7 +655,8 @@ impl InputSystem {
     }
 
     // If there are pending changes to the keyboard memory, apply one.
-    pub fn update_keyboard(&mut self, memory_system: &mut memory::MemorySystem) {
+    pub fn update(&mut self, memory_system: &mut memory::MemorySystem) {
+
         let ref mut kbd_mem = memory_system.kbd_mem;
         match self.queue.pop_front() {
             Some(entry) => {
@@ -696,7 +690,7 @@ impl MessageLogging for KeyboardMemory {
     }
 }
 
-impl MessageLogging for InputSystem {
+impl MessageLogging for Keyboard {
     fn log_message(&mut self, message: String) {
         self.logged_messages.push(message);
         self.messages_present = true;

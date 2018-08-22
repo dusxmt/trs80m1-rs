@@ -16,8 +16,7 @@
 use std::thread;
 use std::time as std_time;
 
-use z80::cpu;
-use keyboard;
+use emulator;
 use memory;
 use proj_config;
 use time;
@@ -134,22 +133,22 @@ impl Scheduler {
     }
     pub fn perform_cycles(&mut self,
                           cycles_to_exec:  u32,
-                          cpu:             &mut cpu::CPU,
-                          input_system:    &mut keyboard::InputSystem,
+                          devices:         &mut emulator::Devices,
                           memory_system:   &mut memory::MemorySystem) {
+
         let mut needed_cycles = cycles_to_exec;
 
         while (self.cycles_since_last + needed_cycles) > self.cycles_per_keypress {
             let to_exec = self.cycles_per_keypress - self.cycles_since_last;
 
-            cpu.exec(to_exec, memory_system);
-            input_system.update_keyboard(memory_system);
+            devices.cpu.exec(to_exec, memory_system);
+            devices.keyboard.update(memory_system);
 
             self.cycles_since_last = 0;
             needed_cycles -= to_exec;
         }
         if needed_cycles > 0 {
-            cpu.exec(needed_cycles, memory_system);
+            devices.cpu.exec(needed_cycles, memory_system);
             self.cycles_since_last += needed_cycles;
         }
     }

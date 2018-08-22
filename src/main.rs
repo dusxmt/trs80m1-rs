@@ -102,7 +102,7 @@ fn main() {
 
     let mut startup_logger = util::StartupLogger::new();
 
-    let mut config_system = match proj_config::ConfigSystem::new(&config_dir, &mut startup_logger) {
+    let config_system = match proj_config::ConfigSystem::new(&config_dir, &mut startup_logger) {
         Some(system) => { system },
         None => {
             eprintln!("Failed to initialize the emulator.");
@@ -110,31 +110,24 @@ fn main() {
             process::exit(1);
         }
     };
-    let selected_rom;
 
-    if rom1_selected {
-        selected_rom = 1;
+    let selected_rom = if rom1_selected {
+        1
     } else if rom2_selected {
-        selected_rom = 2;
+        2
     } else if rom3_selected {
-        selected_rom = 3;
+        3
     } else {
-        selected_rom = config_system.config_items.general_default_rom;
-    }
-
-    let mut memory_system = match memory::MemorySystem::new(&config_system, &mut startup_logger, selected_rom) {
-        Some(system) => { system },
-        None => {
-            eprintln!("Failed to initialize the emulator's memory system.");
-            user_interface::UserInterface::enter_key_to_close_on_windows();
-            process::exit(1);
-        },
+        config_system.config_items.general_default_rom
     };
-    let mut emulator = emulator::Emulator::new(&config_system.config_items, &mut startup_logger);
-    let ask_for_enter = emulator.run(&mut memory_system, &mut config_system, startup_logger);
 
-    if ask_for_enter {
-        user_interface::UserInterface::enter_key_to_close_on_windows();
+    match emulator::run(config_system, startup_logger, selected_rom) {
+        emulator::ExitType::AskForEnterOnWindows(status) => {
+            user_interface::UserInterface::enter_key_to_close_on_windows();
+            process::exit(status);
+        }
+        emulator::ExitType::JustExit(status) => {
+            process::exit(status);
+        }
     }
-    process::exit(0);
 }
