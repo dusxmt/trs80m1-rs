@@ -1548,7 +1548,7 @@ impl UserInterface {
 
             if self.screen_too_small {
                 self.window.mv(0, 0);
-                self.window.printw(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH).as_ref());
+                self.window.printw(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH).as_str());
             } else {
                 self.render_lines();
                 self.render_status_strips();
