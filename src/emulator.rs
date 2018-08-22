@@ -275,7 +275,8 @@ impl Runtime {
                          event_pump:      &mut sdl2::EventPump) -> bool {
 
         let (width, height) = config_system.config_items.video_windowed_resolution;
-        let mut window_builder = video_context.window("trs80m1-rs", width, height);
+        let mut window_builder = video_context.window("TRS-80 Model I Emulator", width, height);
+
         let window = match window_builder.position_centered().build() {
             Ok(window) => { window },
             Err(error) => {
@@ -352,7 +353,8 @@ impl Runtime {
                          event_pump:      &mut sdl2::EventPump) -> bool {
 
         let (width, height) = config_system.config_items.video_windowed_resolution;
-        let mut window_builder = video_context.window("trs80m1-rs", width, height);
+        let mut window_builder = video_context.window("TRS-80 Model I Emulator", width, height);
+
         let window = match window_builder.position_centered().build() {
             Ok(window) => { window },
             Err(error) => {
