@@ -943,8 +943,8 @@ fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger
 
         for current_char in buffer.chars() {
             // For line-splitting, it is assumed that either an LF or CR/LF is
-            // the line separator. The code ignores any CR, so both of the above
-            // cases end up with LF as the line separator.
+            // the line separator.  The code ignores any CR, so both of the
+            // above cases end up with LF as the line separator.
 
             if current_char == '\n' {
                 line_collection.push(current_line.trim().to_owned());
@@ -1163,7 +1163,7 @@ fn update_line_general_level_1_rom(info_source: ConfigInfoSource, config_items: 
     let new_val = config_items.general_level_1_rom.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_general_level_1_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1188,7 +1188,7 @@ fn update_line_general_level_2_rom(info_source: ConfigInfoSource, config_items: 
     let new_val = config_items.general_level_2_rom.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_general_level_2_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1213,7 +1213,7 @@ fn update_line_general_misc_rom(info_source: ConfigInfoSource, config_items: &mu
     let new_val = config_items.general_misc_rom.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_general_misc_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1273,7 +1273,7 @@ fn update_line_general_default_rom(info_source: ConfigInfoSource, config_items: 
     let new_val = config_items.general_default_rom;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_general_default_rom(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1305,7 +1305,7 @@ fn update_line_general_ram_size(info_source: ConfigInfoSource, config_items: &mu
     let new_val = config_items.general_ram_size;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_general_ram_size(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1471,7 +1471,7 @@ fn update_line_keyboard_ms_per_keypress(info_source: ConfigInfoSource, config_it
     let new_val = config_items.keyboard_ms_per_keypress;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_keyboard_ms_per_keypress(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1537,7 +1537,7 @@ fn update_line_video_windowed_resolution(info_source: ConfigInfoSource, config_i
     let new_val = config_items.video_windowed_resolution;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_windowed_resolution(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1556,7 +1556,7 @@ fn update_line_video_fullscreen_resolution(info_source: ConfigInfoSource, config
     let new_val = config_items.video_fullscreen_resolution;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_fullscreen_resolution(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1598,7 +1598,7 @@ fn update_line_video_bg_color(info_source: ConfigInfoSource, config_items: &mut 
     let new_val = config_items.video_bg_color;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_bg_color(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1617,7 +1617,7 @@ fn update_line_video_fg_color(info_source: ConfigInfoSource, config_items: &mut 
     let new_val = config_items.video_fg_color;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_fg_color(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1659,7 +1659,7 @@ fn update_line_video_desktop_fullscreen_mode(info_source: ConfigInfoSource, conf
     let new_val = config_items.video_desktop_fullscreen_mode;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_desktop_fullscreen_mode(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1689,7 +1689,7 @@ fn update_line_video_use_hw_accel(info_source: ConfigInfoSource, config_items: &
     let new_val = config_items.video_use_hw_accel;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_use_hw_accel(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1719,7 +1719,7 @@ fn update_line_video_use_vsync(info_source: ConfigInfoSource, config_items: &mut
     let new_val = config_items.video_use_vsync;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_use_vsync(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1749,7 +1749,7 @@ fn update_line_video_character_generator(info_source: ConfigInfoSource, config_i
     let new_val = config_items.video_character_generator;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_character_generator(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -1781,7 +1781,7 @@ fn update_line_video_lowercase_mod(info_source: ConfigInfoSource, config_items: 
     let new_val = config_items.video_lowercase_mod;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_video_lowercase_mod(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -2046,7 +2046,7 @@ fn update_line_cassette_file(info_source: ConfigInfoSource, config_items: &mut C
     let new_val = config_items.cassette_file.clone();
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_cassette_file(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -2071,7 +2071,7 @@ fn update_line_cassette_file_format(info_source: ConfigInfoSource, config_items:
     let new_val = config_items.cassette_file_format;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_cassette_file_format(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },
@@ -2096,7 +2096,7 @@ fn update_line_cassette_file_offset(info_source: ConfigInfoSource, config_items:
     let new_val = config_items.cassette_file_offset;
 
     // Re-parse the entry, to see if it really changed and to see whether
-    // an update really is neccessary. On failure assume yes.
+    // an update really is neccessary.  On failure assume yes.
     let failed_read = match parse_entry_cassette_file_offset(info_source, config_items) {
         Ok(..)  => { false },
         Err(..) => { true  },

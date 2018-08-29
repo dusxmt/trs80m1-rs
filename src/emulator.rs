@@ -496,19 +496,19 @@ impl Runtime {
                       in_desktop_fsm:  &mut bool,
                       ns_per_frame:    u32) {
 
-        let mut timer = timing::FrameTimer::new(ns_per_frame, timing::NS_PER_CPU_CYCLE);
+        let mut frame_timer = timing::FrameTimer::new(ns_per_frame, timing::NS_PER_CPU_CYCLE);
 
         while !self.curses_exit_request
               && !self.sdl_exit_request
               && !self.video_system_update
               && !self.video_textures_update {
 
-            let frame_cycles = timer.frame_cycles();
+            let frame_cycles = frame_timer.frame_cycles();
 
             devices.keyboard.handle_events(self, event_pump);
             user_interface.handle_user_input(config_system, self, devices, memory_system);
             self.handle_updates(config_system, scheduler, devices, memory_system);
-            self.handle_updates_video(config_system, &mut timer, in_desktop_fsm, canvas);
+            self.handle_updates_video(config_system, &mut frame_timer, in_desktop_fsm, canvas);
 
             if self.powered_on && !self.paused {
                 scheduler.perform_cycles(frame_cycles, devices, memory_system);
@@ -518,7 +518,7 @@ impl Runtime {
             user_interface.update_screen(&self, &devices);
 
             video::render(canvas, narrow_glyphs, wide_glyphs, memory_system);
-            timer.frame_next();
+            frame_timer.frame_next();
         }
     }
     pub fn run_without_video(&mut self,
@@ -533,10 +533,10 @@ impl Runtime {
         self.refresh_rate = None;
         self.vsync_used = false;
 
-        let mut timer = timing::FrameTimer::new(timing::NS_PER_FRAME, timing::NS_PER_CPU_CYCLE);
+        let mut frame_timer = timing::FrameTimer::new(timing::NS_PER_FRAME, timing::NS_PER_CPU_CYCLE);
 
         while !self.curses_exit_request {
-            let frame_cycles = timer.frame_cycles();
+            let frame_cycles = frame_timer.frame_cycles();
 
             user_interface.handle_user_input(config_system, self, devices, memory_system);
             self.handle_updates(config_system, scheduler, devices, memory_system);
@@ -548,7 +548,7 @@ impl Runtime {
             user_interface.collect_logged_messages(self, devices, memory_system);
             user_interface.update_screen(&self, &devices);
 
-            timer.frame_next();
+            frame_timer.frame_next();
         }
     }
 }
