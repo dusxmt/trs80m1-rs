@@ -1171,6 +1171,14 @@ impl UserInterface {
                                 runtime.video_system_update = true;
                                 self.emulator_message("Hardware acceleration usage setting changed.");
                             },
+                            proj_config::ConfigChangeApplyAction::ChangeVsyncUsage => {
+                                if runtime.hw_accel_used {
+                                    runtime.video_system_update = true;
+                                    self.emulator_message("Vertical synchronization usage setting changed.");
+                                } else {
+                                    self.emulator_message("Configuration updated.");
+                                }
+                            },
                             proj_config::ConfigChangeApplyAction::ChangeCharacterGenerator => {
                                 runtime.video_textures_update = true;
                                 self.emulator_message("Character generator changed.");

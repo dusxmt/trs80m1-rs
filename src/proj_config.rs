@@ -62,6 +62,7 @@ pub struct ConfigItems {
 
     pub video_desktop_fullscreen_mode:   bool,
     pub video_use_hw_accel:              bool,
+    pub video_use_vsync:                 bool,
 
     pub video_character_generator:       u32,
     pub video_lowercase_mod:             bool,
@@ -99,6 +100,7 @@ impl ConfigItems {
 
             video_desktop_fullscreen_mode:   false,
             video_use_hw_accel:              false,
+            video_use_vsync:                 false,
 
             video_character_generator:       0,
             video_lowercase_mod:             false,
@@ -342,6 +344,7 @@ pub enum ConfigChangeApplyAction {
     ChangeFullscreenResolution,
     ChangeColor,
     ChangeHwAccelUsage,
+    ChangeVsyncUsage,
     ChangeCharacterGenerator,
     ChangeLowercaseModUsage,
     UpdateCassetteFile,
@@ -1712,6 +1715,36 @@ fn parse_entry_video_use_hw_accel(info_source: ConfigInfoSource, config_items: &
     }
 }
 
+fn update_line_video_use_vsync(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
+    let new_val = config_items.video_use_vsync;
+
+    // Re-parse the entry, to see if it really changed and to see whether
+    // an update really is neccessary. On failure assume yes.
+    let failed_read = match parse_entry_video_use_vsync(info_source, config_items) {
+        Ok(..)  => { false },
+        Err(..) => { true  },
+    };
+
+    // Update only if we really need to update:
+    if failed_read || config_items.video_use_vsync != new_val {
+        config_items.video_use_vsync = new_val;
+        Some(format!("use_vsync = {}", if new_val { "true" } else { "false" }))
+    } else {
+        None
+    }
+}
+fn parse_entry_video_use_vsync(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Result<(), ConfigError> {
+    match parse_bool_argument(info_source.argument_text().as_str()) {
+        Some(value) => {
+            config_items.video_use_vsync = value;
+            Ok(())
+        },
+        None => {
+            Err(ConfigError::InvalidBoolSpecifier(info_source))
+        }
+    }
+}
+
 fn update_line_video_character_generator(info_source: ConfigInfoSource, config_items: &mut ConfigItems) -> Option<String> {
     let new_val = config_items.video_character_generator;
 
@@ -1881,8 +1914,6 @@ fn new_handler_video_use_hw_accel() -> ConfigEntry {
     default_text.push("; This is mainly useful when not using the emulator's native resolution, as it".to_owned());
     default_text.push("; allows the GPU to stretch the image, instead of having the CPU stretch it.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("; It also provides vertical synchronization.".to_owned());
-    default_text.push(";".to_owned());
     default_text.push("use_hw_accel = true".to_owned());
     default_text.push("".to_owned());
 
@@ -1892,6 +1923,29 @@ fn new_handler_video_use_hw_accel() -> ConfigEntry {
         apply_action: ConfigChangeApplyAction::ChangeHwAccelUsage,
         update_line:  update_line_video_use_hw_accel,
         parse_entry:  parse_entry_video_use_hw_accel,
+    }
+}
+fn new_handler_video_use_vsync() -> ConfigEntry {
+    let mut default_text: Vec<String> = Vec::new();
+
+    default_text.push("".to_owned());
+    default_text.push("; Use vertical synchronization (true or false).".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("; Vith vsync enabled, the screen contents are updated in sync with the screen's".to_owned());
+    default_text.push("; refresh rate.".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("; This option only works if video acceleration is enabled, and the refresh".to_owned());
+    default_text.push("; rate is known.".to_owned());
+    default_text.push(";".to_owned());
+    default_text.push("use_vsync = true".to_owned());
+    default_text.push("".to_owned());
+
+    ConfigEntry {
+        entry_name:   "use_vsync".to_owned(),
+        default_text: default_text.into_boxed_slice(),
+        apply_action: ConfigChangeApplyAction::ChangeVsyncUsage,
+        update_line:  update_line_video_use_vsync,
+        parse_entry:  parse_entry_video_use_vsync,
     }
 }
 fn new_handler_video_character_generator() -> ConfigEntry {
@@ -1974,6 +2028,7 @@ fn new_video_section() -> ConfigSection {
     entries.push(new_handler_video_fg_color());
     entries.push(new_handler_video_desktop_fullscreen_mode());
     entries.push(new_handler_video_use_hw_accel());
+    entries.push(new_handler_video_use_vsync());
     entries.push(new_handler_video_character_generator());
     entries.push(new_handler_video_lowercase_mod());
 

@@ -62,6 +62,9 @@ pub struct Runtime {
     pub fullscreen:             bool,
     pub powered_on:             bool,
     pub paused:                 bool,
+    pub refresh_rate:           Option<u32>,
+    pub hw_accel_used:          bool,
+    pub vsync_used:             bool,
 
     pub curses_exit_request:    bool,
     pub sdl_exit_request:       bool,
@@ -89,6 +92,9 @@ impl Runtime {
             fullscreen:             false,
             powered_on:             false,
             paused:                 false,
+            refresh_rate:           None,
+            hw_accel_used:          false,
+            vsync_used:             false,
 
             curses_exit_request:    false,
             sdl_exit_request:       false,
@@ -218,6 +224,26 @@ impl Runtime {
         self.log_message("System rom changed.".to_owned());
         self.update_rom_request = false;
     }
+    fn calculate_ns_per_frame(&mut self, config_system: &proj_config::ConfigSystem) -> u32 {
+        if self.hw_accel_used && self.vsync_used {
+            let refresh_rate = self.refresh_rate.expect(".expect() call: The refresh rate must be known if vsync is to be used; apparently it is unknown");
+
+            let fallback_refresh_rate = refresh_rate + 10;
+            let ns_per_frame = 1_000_000_000 / fallback_refresh_rate;
+
+            self.log_message(format!("SDL reports a display refresh rate of {}Hz; using vsync, setting software fallback framerate throttle to {} FPS.", refresh_rate, fallback_refresh_rate));
+
+            ns_per_frame
+
+        } else if self.hw_accel_used && config_system.config_items.video_use_vsync {
+            self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
+
+            timing::NS_PER_FRAME
+
+        } else {
+            timing::NS_PER_FRAME
+        }
+    }
     fn handle_updates_video(&mut self,
                             config_system: &proj_config::ConfigSystem,
                             in_desktop_fsm: &mut bool,
@@ -285,32 +311,39 @@ impl Runtime {
             },
         };
         self.fullscreen = false;
+        self.hw_accel_used = true;
 
-        let (canvas_result, ns_per_frame) = match window.display_mode() {
-            Ok(mode) => {
-                if mode.refresh_rate == 0 {
+        // Only use vsync if we know the screen's refresh rate:
+        self.vsync_used = if config_system.config_items.video_use_vsync {
+            match window.display_mode() {
+                Ok(mode) => {
+                    if mode.refresh_rate == 0 {
+                        self.refresh_rate = None;
+                        false
 
-                    self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
-                    (window.into_canvas().accelerated().build(), timing::NS_PER_FRAME)
+                    } else {
+                        self.refresh_rate = Some(mode.refresh_rate as u32);
+                        true
+                    }
+                },
+                Err(err) => {
+                    self.log_message(format!("Failed to get the display mode: {}.", err));
 
-                } else {
-
-                    let fallback_refresh_rate = (mode.refresh_rate as u32) + 10;
-                    let ns_per_frame = 1_000_000_000 / fallback_refresh_rate;
-                    self.log_message(format!("SDL reports a display refresh rate of {}Hz; using vsync, setting software fallback framerate throttle to {} FPS.", mode.refresh_rate, fallback_refresh_rate));
-
-                    (window.into_canvas().accelerated().present_vsync().build(), ns_per_frame)
-                }
-            },
-            Err(err) => {
-                self.log_message(format!("Failed to get the display mode: {}.", err));
-                self.log_message("Screen refresh rate unknown, not using vsync.".to_owned());
-
-                (window.into_canvas().accelerated().build(), timing::NS_PER_FRAME)
-            },
+                    self.refresh_rate = None;
+                    false
+                },
+            }
+        } else {
+            self.refresh_rate = None;
+            false
         };
+        let ns_per_frame = self.calculate_ns_per_frame(config_system);
 
-        let mut canvas = match canvas_result {
+        let mut canvas = match if self.vsync_used {
+            window.into_canvas().accelerated().present_vsync().build()
+        } else {
+            window.into_canvas().accelerated().build()
+        } {
             Ok(canvas) => { canvas },
             Err(error) => {
                 self.log_message(format!("Failed to create a hardware accelerated rendering context: {}.", error));
@@ -363,6 +396,9 @@ impl Runtime {
             },
         };
         self.fullscreen = false;
+        self.hw_accel_used = false;
+        self.refresh_rate = None;
+        self.vsync_used = false;
 
         let mut canvas = match window.into_canvas().software().build() {
             Ok(canvas) => { canvas },
@@ -441,6 +477,11 @@ impl Runtime {
                              scheduler:       &mut timing::Scheduler,
                              devices:         &mut Devices,
                              memory_system:   &mut memory::MemorySystem) {
+
+        self.fullscreen = false;
+        self.hw_accel_used = false;
+        self.refresh_rate = None;
+        self.vsync_used = false;
 
         let mut timer = timing::FrameTimer::new(timing::NS_PER_FRAME, timing::NS_PER_CPU_CYCLE);
 
