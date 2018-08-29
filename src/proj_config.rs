@@ -1914,7 +1914,7 @@ fn new_handler_video_use_hw_accel() -> ConfigEntry {
     default_text.push("; This is mainly useful when not using the emulator's native resolution, as it".to_owned());
     default_text.push("; allows the GPU to stretch the image, instead of having the CPU stretch it.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("use_hw_accel = true".to_owned());
+    default_text.push("use_hw_accel = false".to_owned());
     default_text.push("".to_owned());
 
     ConfigEntry {
@@ -1937,7 +1937,7 @@ fn new_handler_video_use_vsync() -> ConfigEntry {
     default_text.push("; This option only works if video acceleration is enabled, and the refresh".to_owned());
     default_text.push("; rate is known.".to_owned());
     default_text.push(";".to_owned());
-    default_text.push("use_vsync = true".to_owned());
+    default_text.push("use_vsync = false".to_owned());
     default_text.push("".to_owned());
 
     ConfigEntry {
