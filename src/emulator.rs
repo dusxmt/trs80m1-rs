@@ -244,8 +244,44 @@ impl Runtime {
             timing::NS_PER_FRAME
         }
     }
+    fn update_vsync_fps_throttle(&mut self,
+                                 config_system: &proj_config::ConfigSystem,
+                                 frame_timer: &mut timing::FrameTimer,
+                                 window: &mut sdl2::video::Window) {
+
+        let old_refresh_rate = self.refresh_rate.expect(".expect() call: The refresh rate must be known if vsync is to be used; apparently it is unknown");
+
+        match window.display_mode() {
+            Ok(mode) => {
+                if mode.refresh_rate == 0 {
+                    self.refresh_rate = None;
+                    self.vsync_used = false;
+                    self.video_system_update = true;
+
+                    self.log_message(format!("Warning: The refresh rate is now unknown, last known value was {}, disabling vsync.", old_refresh_rate));
+                } else {
+                    if (mode.refresh_rate as u32) != old_refresh_rate {
+                        self.log_message(format!("Note: The refresh rate changed from {} to {}, updating the fallback framerate throttle.", old_refresh_rate, mode.refresh_rate));
+
+                        self.refresh_rate = Some(mode.refresh_rate as u32);
+                        let ns_per_frame = self.calculate_ns_per_frame(config_system);
+                        frame_timer.set_ns_per_frame(ns_per_frame);
+                    }
+                }
+            },
+            Err(error) => {
+                self.refresh_rate = None;
+                self.vsync_used = false;
+                self.video_system_update = true;
+
+                self.log_message(format!("Failed to get the display mode: {}.", error));
+                self.log_message(format!("Warning: The refresh rate is now unknown, last known value was {}, disabling vsync.", old_refresh_rate));
+            }
+        }
+    }
     fn handle_updates_video(&mut self,
                             config_system: &proj_config::ConfigSystem,
+                            frame_timer: &mut timing::FrameTimer,
                             in_desktop_fsm: &mut bool,
                             canvas: &mut sdl2::render::Canvas<sdl2::video::Window>) {
 
@@ -272,6 +308,9 @@ impl Runtime {
 
                 self.fullscreen = false;
             }
+            if self.vsync_used {
+                self.update_vsync_fps_throttle(config_system, frame_timer, window);
+            }
         }
 
         if self.resolution_update {
@@ -279,7 +318,18 @@ impl Runtime {
 
                 let window = canvas.window_mut();
                 let (width, height) = config_system.config_items.video_fullscreen_resolution;
-                window.set_size(width, height).expect(".expect() call: Failed to set the SDL2 window's size");
+
+                let new_mode = sdl2::video::DisplayMode::new(sdl2::pixels::PixelFormatEnum::RGB332, width as i32, height as i32, 0);
+                match window.set_display_mode(new_mode) {
+                    Ok(..) => {
+                        if self.vsync_used {
+                            self.update_vsync_fps_throttle(config_system, frame_timer, window);
+                        }
+                    },
+                    Err(error) => {
+                        self.log_message(format!("Failed to update the fullscreen resolution to {}x{}: {}.", width, height, error));
+                    },
+                }
 
             } else if !self.fullscreen {
 
@@ -326,8 +376,8 @@ impl Runtime {
                         true
                     }
                 },
-                Err(err) => {
-                    self.log_message(format!("Failed to get the display mode: {}.", err));
+                Err(error) => {
+                    self.log_message(format!("Failed to get the display mode: {}.", error));
 
                     self.refresh_rate = None;
                     false
@@ -458,7 +508,7 @@ impl Runtime {
             devices.keyboard.handle_events(self, event_pump);
             user_interface.handle_user_input(config_system, self, devices, memory_system);
             self.handle_updates(config_system, scheduler, devices, memory_system);
-            self.handle_updates_video(config_system, in_desktop_fsm, canvas);
+            self.handle_updates_video(config_system, &mut timer, in_desktop_fsm, canvas);
 
             if self.powered_on && !self.paused {
                 scheduler.perform_cycles(frame_cycles, devices, memory_system);

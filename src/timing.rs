@@ -63,6 +63,9 @@ impl FrameTimer {
             residual_ns:    ns_per_frame % ns_per_cycle,
         }
     }
+    pub fn set_ns_per_frame(&mut self, ns_per_frame: u32) {
+        self.ns_per_frame = ns_per_frame;
+    }
     pub fn frame_cycles(&mut self) -> u32 {
         self.frame_cycles
     }
