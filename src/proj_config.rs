@@ -615,7 +615,12 @@ impl ConfigSystem {
             } else if in_the_section {
                 if let Some(character) = self.conf_file_lines[line_iter].chars().next() {
                     if character == '[' {
-                        end_index = line_iter - 1;
+                        // Is there a blank line before the next section starts?
+                        if (line_iter - 1) > start_index && self.conf_file_lines[line_iter - 1] == "" {
+                            end_index = line_iter - 2;
+                        } else {
+                            end_index = line_iter - 1;
+                        }
                         in_the_section = false;
                     }
                 }
