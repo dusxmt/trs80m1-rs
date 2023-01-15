@@ -22,7 +22,7 @@
  */
 
 /*
-   Modified by Marek Benc, 2017, 2018, to adapt it for the rust-based
+   Modified by Marek Benc, 2017, 2018, 2023, to adapt it for the rust-based
    trs80m1-rs emulator.
  */
 
@@ -31,11 +31,11 @@ use std::fs;
 use std::io::Read;
 use std::io::Write;
 
-use proj_config;
-use memory;
-use timing;
-use util;
-use util::MessageLogging;
+use crate::proj_config;
+use crate::memory;
+use crate::timing;
+use crate::util;
+use crate::util::MessageLogging;
 
 
 const CPU_MHZ:    f32 = (timing::CPU_HZ as f32) / (1_000_000 as f32);

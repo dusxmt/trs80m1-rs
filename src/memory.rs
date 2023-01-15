@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -17,13 +17,13 @@ use std::io::prelude::*;
 use std::fs;
 use std::path;
 
-use proj_config;
-use keyboard;
-use video;
-use cassette;
+use crate::proj_config;
+use crate::keyboard;
+use crate::video;
+use crate::cassette;
 
-use util;
-use util::MessageLogging;
+use crate::util;
+use crate::util::MessageLogging;
 
 
 // Memory layout:
@@ -354,13 +354,13 @@ impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
 //
 //    row_iter = 0;
 //    while row_iter < data.len() {
-//        try!(write!(f, "    {:04X}:", row_iter));
+//        write!(f, "    {:04X}:", row_iter)?;
 //        column_iter = 0;
 //        while (row_iter + column_iter) < data.len() && column_iter < 16 {
-//            try!(write!(f, " {:02X}", data[row_iter + column_iter]));
+//            write!(f, " {:02X}", data[row_iter + column_iter])?;
 //            column_iter += 0x1;
 //        }
-//        try!(write!(f, "\n"));
+//        write!(f, "\n")?;
 //        row_iter += 0x10;
 //    }
 //    Ok(())
@@ -370,10 +370,10 @@ impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
 //    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 //        let chip_id = self.chip_id().to_owned();
 //        let data    = self.chip_data();
-//        try!(write!(f, "MemoryChip {{\n    id: `{}',\n    Size of the chip: {} (0x{:04X}),\n\n    Hex dump:\n",
-//            chip_id, data.len(), data.len()));
-//        try!(hexdump(f, data));
-//        try!(write!(f, "}}"));
+//        write!(f, "MemoryChip {{\n    id: `{}',\n    Size of the chip: {} (0x{:04X}),\n\n    Hex dump:\n",
+//            chip_id, data.len(), data.len())?;
+//        hexdump(f, data)?;
+//        write!(f, "}}")?;
 //
 //        Ok(())
 //    }

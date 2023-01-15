@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -13,18 +13,19 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
+use home;
+
 use std::env;
 use std::fmt;
-use std::error;
 use std::path; 
 use std::fs;
 use std::io;
 use std::num;
 use std::io::prelude::*;
 
-use cassette; // For cassette::Format.
-use util;     // for util::StartupLogger.
-use util::MessageLogging;
+use crate::cassette; // For cassette::Format.
+use crate::util;     // for util::StartupLogger.
+use crate::util::MessageLogging;
 
 // Names for determining where to find the configuration folder and files:
 const WINDOWS_DEV_NAME:      &'static str = "DusXMT";
@@ -202,67 +203,67 @@ impl fmt::Display for ConfigError {
                 write!(f, "entry `{}' is present more than once in the `[{}]' section of the config file, on line {} and line {}", entry_name, section_name, first + 1, second + 1)
             },
             ConfigError::EntryIntParsingError(ref info_source, ref inner_error) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "failed to parse the entry argument: {}", inner_error)
             },
             ConfigError::TextAfterConfigSectionClosingBracket(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "there is text present after the config section header's closing bracket")
             },
             ConfigError::NonAlphaCharactersInConfigSectionName(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the config section name contains non-alphabetical characters")
             },
             ConfigError::ClosingBracketMissingInConfigSectionHeader(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the closing bracket is missing in the config section header")
             },
             ConfigError::EntryNameBeginsWithNonAlpha(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the entry's name begins with a non-alphabetical character")
             },
             ConfigError::EntryNameContainsSpaces(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the entry's name contains spaces")
             },
             ConfigError::EntryNameContainsNonAlnumChars(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the entry's name contains non-alphanumerical characters")
             },
             ConfigError::EntryContainsSeveralEqualsSigns(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the entry contains several equals signs")
             },
             ConfigError::EntryEqualsSignMissing(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the entry doesn't contain an equals sign")
             },
             ConfigError::EntryArgumentMissing(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the entry doesn't contain an argument")
             },
             ConfigError::InvalidResolutionSpecifier(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "invalid resolution specification")
             },
             ConfigError::InvalidColorSpecifier(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "invalid color specification")
             },
             ConfigError::InvalidBoolSpecifier(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "invalid boolean specification")
             },
             ConfigError::InvalidCassetteFormatSpecifier(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "invalid cassette format specification, please use either CAS or CPT")
             },
             ConfigError::InvalidRamSpecifier(ref info_source) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "invalid ram specification")
             },
             ConfigError::TooMuchRamRequested(ref info_source, ram_requested) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 if (ram_requested % 1024) == 0 {
                     write!(f, "the requested amout of ram ({}K) is more than what can be installed in the machine, it supports only up to 48K (49152 bytes) of ram", ram_requested / 1024)
                 } else {
@@ -270,11 +271,11 @@ impl fmt::Display for ConfigError {
                 }
             }
             ConfigError::DefaultRomOutOfRange(ref info_source, selection) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the specified default rom selection of {} is out of range, please choose either 1 (level 1 basic), 2 (level 2 basic), or 3 (miscellaneous rom)", selection)
             },
             ConfigError::CharacterGeneratorOutOfRange(ref info_source, selection) => {
-                try!(info_source.error_prefix(f));
+                info_source.error_prefix(f)?;
                 write!(f, "the specified character generator selection of {} is out of range, please choose from 1 to 3", selection)
             },
             ConfigError::EntrySpecNoSectionNameSpecified(ref entry_specifier) => {
@@ -289,37 +290,6 @@ impl fmt::Display for ConfigError {
             ConfigError::IoError(ref io_error) => {
                 io_error.fmt(f)
             },
-        }
-    }
-}
-
-impl error::Error for ConfigError {
-    fn description(&self) -> &str {
-        match *self {
-            ConfigError::RedundantSection(..)     => { "redundant config section" },
-            ConfigError::RedundantEntry(..)       => { "redundant config entry" },
-            ConfigError::EntryIntParsingError(..) => { "invalid config entry argument" },
-            ConfigError::TextAfterConfigSectionClosingBracket(..)       => { "text present after the config section header closing bracket" },
-            ConfigError::NonAlphaCharactersInConfigSectionName(..)      => { "config section name contains non-alphabetical characters" },
-            ConfigError::ClosingBracketMissingInConfigSectionHeader(..) => { "closing bracket missing in config section header" },
-            ConfigError::EntryNameBeginsWithNonAlpha(..)     => { "entry name begins with a non-alphabetical character" },
-            ConfigError::EntryNameContainsSpaces(..)         => { "entry name contains spaces" },
-            ConfigError::EntryNameContainsNonAlnumChars(..)  => { "entry name contains non-alphanumerical characters" },
-            ConfigError::EntryContainsSeveralEqualsSigns(..) => { "entry contains several equals signs" },
-            ConfigError::EntryEqualsSignMissing(..)          => { "entry doesn't contain an equals sign" },
-            ConfigError::EntryArgumentMissing(..)            => { "entry doesn't contain an argument" },
-            ConfigError::InvalidResolutionSpecifier(..)      => { "invalid resolution specification" },
-            ConfigError::InvalidColorSpecifier(..)           => { "invalid color specification" },
-            ConfigError::InvalidBoolSpecifier(..)            => { "invalid boolean specification" },
-            ConfigError::InvalidCassetteFormatSpecifier(..)  => { "invalid cassette format specification" },
-            ConfigError::InvalidRamSpecifier(..)             => { "invalid ram specification" },
-            ConfigError::TooMuchRamRequested(..)             => { "more ram requested than the machine supports" },
-            ConfigError::DefaultRomOutOfRange(..)            => { "default rom selection out of range" },
-            ConfigError::CharacterGeneratorOutOfRange(..)    => { "character generator selection out of range" },
-            ConfigError::EntrySpecNoSectionNameSpecified(..) => { "entry specifier is missing entry name" },
-            ConfigError::EntrySpecNoEntryNameSpecified(..)   => { "entry specifier is missing section name" },
-            ConfigError::EntrySpecNoSuchConfigEntry(..)      => { "entry specifier refers to a non-existent entry" },
-            ConfigError::IoError(ref io_error)               => { io_error.description() },
         }
     }
 }
@@ -552,7 +522,7 @@ impl ConfigSystem {
             let start_index;
             let mut end_index;
 
-            match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+            match self.find_section(&self.config_sections[section_iter].section_name)? {
                 Some((found_start_index, found_end_index)) => {
                     start_index = found_start_index;
                     end_index   = found_end_index;
@@ -573,7 +543,7 @@ impl ConfigSystem {
             // Find all of its entries and reload them:
             for entry_iter in 0..self.config_sections[section_iter].entries.len() {
                 // Find the entry's location:
-                let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                     Some(loc) => { loc },
                     None => {
                         // The entry doesn't exist yet, add it:
@@ -585,10 +555,10 @@ impl ConfigSystem {
                             dest_line_iter += 1;
                         }
                         end_index = dest_line_iter - 1;
-                        try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)).expect(format!(".expect() call: Unable to find the freshly added `{}' entry in the `[{}]' section", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name).as_str())
+                        self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)?.expect(format!(".expect() call: Unable to find the freshly added `{}' entry in the `[{}]' section", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name).as_str())
                     },
                 };
-                try!((self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_config_file(entry_loc, &self.conf_file_lines[entry_loc]), &mut self.config_items));
+                (self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_config_file(entry_loc, &self.conf_file_lines[entry_loc]), &mut self.config_items)?;
             }
         }
 
@@ -675,11 +645,11 @@ impl ConfigSystem {
 
         for section_iter in 0..self.config_sections.len() {
 
-            match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+            match self.find_section(&self.config_sections[section_iter].section_name)? {
                 Some((start_index, end_index)) => {
                     for entry_iter in 0..self.config_sections[section_iter].obsolete_entries.len() {
 
-                        match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].obsolete_entries[entry_iter], start_index, end_index)) {
+                        match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].obsolete_entries[entry_iter], start_index, end_index)? {
                             Some(loc) => {
                                 startup_logger.log_message(format!("Note: The entry `{}' of the `[{}]' section at line {} of `{}' is from an older version of the emulator and is no longer used, it can be safely removed from the configuration file.", self.config_sections[section_iter].obsolete_entries[entry_iter], self.config_sections[section_iter].section_name, loc + 1, config_file_path.display()));
                             },
@@ -700,10 +670,10 @@ impl ConfigSystem {
             false => { "\n" },
         };
 
-        let mut out_file = try!(fs::File::create(&self.config_file_path));
+        let mut out_file = fs::File::create(&self.config_file_path)?;
         for line in &self.conf_file_lines {
-            try!(out_file.write_all(line.as_bytes()));
-            try!(out_file.write_all(eol_mark.as_bytes()));
+            out_file.write_all(line.as_bytes())?;
+            out_file.write_all(eol_mark.as_bytes())?;
         }
 
         Ok(())
@@ -739,13 +709,13 @@ impl ConfigSystem {
         }
     }
     pub fn get_config_entry_current_state(&self, entry_specifier: &str) -> Result<String, ConfigError> {
-        let (requested_section, requested_entry) = try!(ConfigSystem::parse_entry_specifier(entry_specifier));
+        let (requested_section, requested_entry) = ConfigSystem::parse_entry_specifier(entry_specifier)?;
 
         for section_iter in 0..self.config_sections.len() {
             let section_name_lc = self.config_sections[section_iter].section_name.to_lowercase();
 
             if section_name_lc == requested_section {
-                let (start_index, end_index) = match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+                let (start_index, end_index) = match self.find_section(&self.config_sections[section_iter].section_name)? {
                     Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
                     None => {
                         panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
@@ -755,7 +725,7 @@ impl ConfigSystem {
                     let entry_name_lc = self.config_sections[section_iter].entries[entry_iter].entry_name.to_lowercase();
 
                     if entry_name_lc == requested_entry {
-                        let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                        let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                             Some(loc) => { loc },
                             None => {
                                 panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
@@ -775,7 +745,7 @@ impl ConfigSystem {
         for section_iter in 0..self.config_sections.len() {
             let section_name_lc = self.config_sections[section_iter].section_name.to_lowercase();
 
-            let (start_index, end_index) = match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+            let (start_index, end_index) = match self.find_section(&self.config_sections[section_iter].section_name)? {
                 Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
                 None => {
                     panic!("ConfigSystem::get_config_entry_current_state_all(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
@@ -784,7 +754,7 @@ impl ConfigSystem {
             for entry_iter in 0..self.config_sections[section_iter].entries.len() {
                 let entry_name_lc = self.config_sections[section_iter].entries[entry_iter].entry_name.to_lowercase();
 
-                let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                     Some(loc) => { loc },
                     None => {
                         panic!("ConfigSystem::get_config_entry_current_state_all(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
@@ -799,13 +769,13 @@ impl ConfigSystem {
         Ok(entry_state_collection)
     }
     pub fn change_config_entry(&mut self, entry_specifier: &str, invocation_text: &str) -> Result<ConfigChangeApplyAction, ConfigError> {
-        let (requested_section, requested_entry) = try!(ConfigSystem::parse_entry_specifier(entry_specifier));
+        let (requested_section, requested_entry) = ConfigSystem::parse_entry_specifier(entry_specifier)?;
 
         for section_iter in 0..self.config_sections.len() {
             let section_name_lc = self.config_sections[section_iter].section_name.to_lowercase();
 
             if section_name_lc == requested_section {
-                let (start_index, end_index) = match try!(self.find_section(&self.config_sections[section_iter].section_name)) {
+                let (start_index, end_index) = match self.find_section(&self.config_sections[section_iter].section_name)? {
                     Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
                     None => {
                         panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
@@ -815,17 +785,17 @@ impl ConfigSystem {
                     let entry_name_lc = self.config_sections[section_iter].entries[entry_iter].entry_name.to_lowercase();
 
                     if entry_name_lc == requested_entry {
-                        let entry_loc = match try!(self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)) {
+                        let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                             Some(loc) => { loc },
                             None => {
                                 panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
                             },
                         };
-                        try!((self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_external_source(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, invocation_text), &mut self.config_items));
+                        (self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_external_source(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, invocation_text), &mut self.config_items)?;
                         match (self.config_sections[section_iter].entries[entry_iter].update_line)(ConfigInfoSource::from_config_file(entry_loc, &self.conf_file_lines[entry_loc]), &mut self.config_items) {
                             Some(updated_line) => {
                                 self.conf_file_lines[entry_loc] = updated_line;
-                                try!(self.write_config_file());
+                                self.write_config_file()?;
                                 return Ok(self.config_sections[section_iter].entries[entry_iter].apply_action);
                             },
                             None => {
@@ -893,7 +863,7 @@ pub fn get_default_config_dir_path() -> path::PathBuf {
 
         config_dir_path
     } else {
-        let mut config_dir_path = env::home_dir().expect(".expect() call: Failed to find the home directory");
+        let mut config_dir_path = home::home_dir().expect(".expect() call: Failed to find the home directory");
         config_dir_path.push(UNIX_HIDDEN_DIR_NAME);
 
         config_dir_path
@@ -938,9 +908,9 @@ fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger
     let config_file_path = config_file_path_in.as_ref() as &path::Path;
     if config_file_path.exists() {
         // Load everything:
-        let mut config_file = try!(fs::File::open(config_file_path));
+        let mut config_file = fs::File::open(config_file_path)?;
         let mut buffer = String::new();
-        try!(config_file.read_to_string(&mut buffer));
+        config_file.read_to_string(&mut buffer)?;
 
         // Split it into lines:
         let mut current_line = String::new();
@@ -968,7 +938,7 @@ fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger
     } else {
         // Nothing to load:
         startup_logger.log_incomplete_message("doesn't exist, creating... ".to_owned());
-        try!(fs::File::create(config_file_path));
+        fs::File::create(config_file_path)?;
         Ok(Vec::new())
     }
 }

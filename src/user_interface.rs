@@ -1,4 +1,4 @@
-// Copyright (c) 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -13,6 +13,8 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
+use pancurses;
+
 use std::collections::VecDeque;
 use std::io;
 use std::io::Read;
@@ -20,14 +22,13 @@ use std::io::Write;
 use std::panic;
 use std::path;
 
-use cassette;
-use emulator;
-use memory;
-use memory::MemoryChipOps;
-use proj_config;
-use pancurses;
-use util;
-use util::MessageLogging;
+use crate::cassette;
+use crate::emulator;
+use crate::memory;
+use crate::memory::MemoryChipOps;
+use crate::proj_config;
+use crate::util;
+use crate::util::MessageLogging;
 
 // Program name and version:
 const PROGRAM_NAME:    &str = env!("CARGO_PKG_NAME");
@@ -1227,7 +1228,7 @@ impl UserInterface {
             SimplyAppend,
             AppendAndSwap,
             AppendToLast,
-        };
+        }
         let action: Action = match self.screen_lines.front() {
             None => {
                 Action::SimplyAppend

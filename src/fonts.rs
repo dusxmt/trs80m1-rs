@@ -3,7 +3,7 @@
 //
 //    http://www.tim-mann.org/xtrs.html
 //
-use video;
+use crate::video;
 
 pub const FONT_GLYPH_BYTES:  u32   = video::GLYPH_HEIGHT;
 pub const FONT_GLYPH_COUNT:  u32   = 128;

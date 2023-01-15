@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -44,11 +44,11 @@
 // Parentheses help code readability, which is especially important here.
 #![allow(unused_parens)]
 
-use memory;
-use memory::MemIO;
-use memory::PeripheralIO;
-use util::MessageLogging;
-use z80::cpu;
+use crate::memory;
+use crate::memory::MemIO;
+use crate::memory::PeripheralIO;
+use crate::util::MessageLogging;
+use crate::z80::cpu;
 
 pub struct Instruction {
     pub execute:       fn (&mut cpu::CPU, &mut memory::MemorySystem),

@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -16,10 +16,10 @@
 use std::collections::VecDeque;
 use std::collections::HashMap;
 
-use emulator;
-use memory;
-use sdl2;
-use util::MessageLogging;
+use crate::emulator;
+use crate::memory;
+use crate::sdl2;
+use crate::util::MessageLogging;
 
 // Even though the keyboard only has (at most) 64 keys, because of the way they
 // are wired up, it takes up 256 bytes of the address space.
@@ -38,14 +38,14 @@ impl memory::MemIO for KeyboardMemory {
             // The lower byte specifies which row of the matrix is selected.
             let specifier: u8 = (addr & 0x00FF) as u8;
 
-            (0 | if (specifier & 0x01) != 0 { self.key_matrix[0] } else { 0 }
-               | if (specifier & 0x02) != 0 { self.key_matrix[1] } else { 0 }
-               | if (specifier & 0x04) != 0 { self.key_matrix[2] } else { 0 }
-               | if (specifier & 0x08) != 0 { self.key_matrix[3] } else { 0 }
-               | if (specifier & 0x10) != 0 { self.key_matrix[4] } else { 0 }
-               | if (specifier & 0x20) != 0 { self.key_matrix[5] } else { 0 }
-               | if (specifier & 0x40) != 0 { self.key_matrix[6] } else { 0 }
-               | if (specifier & 0x80) != 0 { self.key_matrix[7] } else { 0 })
+            0 | if (specifier & 0x01) != 0 { self.key_matrix[0] } else { 0 }
+              | if (specifier & 0x02) != 0 { self.key_matrix[1] } else { 0 }
+              | if (specifier & 0x04) != 0 { self.key_matrix[2] } else { 0 }
+              | if (specifier & 0x08) != 0 { self.key_matrix[3] } else { 0 }
+              | if (specifier & 0x10) != 0 { self.key_matrix[4] } else { 0 }
+              | if (specifier & 0x20) != 0 { self.key_matrix[5] } else { 0 }
+              | if (specifier & 0x40) != 0 { self.key_matrix[6] } else { 0 }
+              | if (specifier & 0x80) != 0 { self.key_matrix[7] } else { 0 }
         } else {
             panic!("Failed read: Address 0x{:04X} is invalid for the keyboard", addr);
         }

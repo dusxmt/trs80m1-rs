@@ -2,12 +2,15 @@
 name = "trs80m1-rs"
 version = "0.2.0"
 authors = ["Marek Benc <dusxmt@gmx.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sdl2 = "0.31"
-time = "0.1"
 getopts = "0.2"
+home = "0.5.4"
+sdl2 = "0.35"
 
 [dependencies.pancurses]
-version = "0.16"
+version = "0.17"
 features = ["win32"]

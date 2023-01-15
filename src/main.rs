@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -14,13 +14,9 @@
 //
 
 extern crate getopts;
+extern crate home;
 extern crate pancurses;
 extern crate sdl2;
-extern crate time;
-
-use std::env;
-use std::path;
-use std::process;
 
 mod cassette;
 mod emulator;
@@ -33,6 +29,11 @@ mod user_interface;
 mod util;
 mod video;
 mod z80;
+
+use std::env;
+use std::path;
+use std::process;
+
 
 fn print_usage(progname: &str, opts: getopts::Options) {
     let brief = format!("Usage: {} [options]", progname);

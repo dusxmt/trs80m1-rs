@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -14,12 +14,11 @@
 //
 
 use std::thread;
-use std::time as std_time;
+use std::time;
 
-use emulator;
-use memory;
-use proj_config;
-use time;
+use crate::emulator;
+use crate::memory;
+use crate::proj_config;
 
 // Timing description:
 pub const MASTER_HZ:          u32 = 10_644_480;
@@ -44,20 +43,19 @@ pub struct FrameTimer {
     ns_per_frame:    u32,
     ns_per_cycle:    u32,
 
-    frame_begin:     std_time::Duration,
+    frame_begin:     time::Instant,
     frame_cycles:    u32,
     residual_ns:     u32,
 }
 
 impl FrameTimer {
     pub fn new(ns_per_frame: u32, ns_per_cycle: u32) -> FrameTimer {
-        let stamp_now = time::get_time();
 
         FrameTimer {
             ns_per_frame:   ns_per_frame,
             ns_per_cycle:   ns_per_cycle,
 
-            frame_begin:    std_time::Duration::new(stamp_now.sec as u64, stamp_now.nsec as u32),
+            frame_begin:    time::Instant::now(),
 
             frame_cycles:   ns_per_frame / ns_per_cycle,
             residual_ns:    ns_per_frame % ns_per_cycle,
@@ -70,18 +68,16 @@ impl FrameTimer {
         self.frame_cycles
     }
     pub fn frame_next(&mut self) {
-        let stamp_now = time::get_time();
-        let mut frame_end = std_time::Duration::new(stamp_now.sec as u64, stamp_now.nsec as u32);
-        let mut frame_duration = frame_end - self.frame_begin;
+        let mut frame_end = time::Instant::now();
+        let mut frame_duration = frame_end.duration_since(self.frame_begin);
 
         // If we have time to spare, take a nap.
         let frame_dur_ns = frame_duration.subsec_nanos();
         if frame_duration.as_secs() == 0 && frame_dur_ns < self.ns_per_frame {
 
-            thread::sleep(std_time::Duration::new(0, self.ns_per_frame - frame_dur_ns));
-            let stamp_now = time::get_time();
-            frame_end = std_time::Duration::new(stamp_now.sec as u64, stamp_now.nsec as u32);
-            frame_duration = frame_end - self.frame_begin;
+            thread::sleep(time::Duration::new(0, self.ns_per_frame - frame_dur_ns));
+            frame_end = time::Instant::now();
+            frame_duration = frame_end.duration_since(self.frame_begin);
         }
 
         let mut last_frame_ns = if frame_duration.as_secs() == 0 {

@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -15,16 +15,16 @@
 
 use sdl2;
 
-use z80::cpu;
-use proj_config;
-use memory;
-use memory::MemoryChipOps;
-use keyboard;
-use video;
-use timing;
-use user_interface;
-use util;
-use util::MessageLogging;
+use crate::z80::cpu;
+use crate::proj_config;
+use crate::memory;
+use crate::memory::MemoryChipOps;
+use crate::keyboard;
+use crate::video;
+use crate::timing;
+use crate::user_interface;
+use crate::util;
+use crate::util::MessageLogging;
 
 
 pub struct Devices {

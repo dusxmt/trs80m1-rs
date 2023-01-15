@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -13,11 +13,12 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
-use fonts;
-use memory;
-use proj_config;
 use sdl2;
-use util::MessageLogging;
+
+use crate::fonts;
+use crate::memory;
+use crate::proj_config;
+use crate::util::MessageLogging;
 
 pub const VID_MEM_SIZE:    u16 = 0x0400;
 
