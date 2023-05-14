@@ -2279,7 +2279,7 @@ impl UserInterface {
 
         // Write in some text:
         self.window.mv(TOP_STRIP_TOP_OFFSET as i32, 1);
-        self.window.addstr(format!("{} v{} - z80 emulator", PROGRAM_NAME, PROGRAM_VERSION).as_str());
+        self.window.addstr(format!("{} v{} - TRS-80 Model I emulator", PROGRAM_NAME, PROGRAM_VERSION).as_str());
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
 
         self.window.mv((self.screen_height - BOTTOM_STRIP_BOTTOM_OFFSET) as i32 - 1, 1);
