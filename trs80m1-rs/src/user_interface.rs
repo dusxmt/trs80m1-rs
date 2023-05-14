@@ -14,6 +14,7 @@
 //
 
 use pancurses;
+use unicode_width;
 
 use std::collections::VecDeque;
 use std::io;
@@ -64,21 +65,191 @@ pub enum ScreenLineType {
     EmulatorMessage,
     MachineMessage { complete: bool },
 }
+
+#[derive(Clone)]
 struct ScreenLine {
-    line_type:    ScreenLineType,
-    line_content: String,
+    line_type:                ScreenLineType,
+    line_codes:               Vec<char>,
+    line_widths:              Vec<u8>,
+    cached_screen_width:      usize,
+    cached_line_screen_rows:  usize,
+    cached_last_row_cols:     usize,
 }
 
 impl ScreenLine {
-    fn physical_lines(&self, screen_width: usize) -> usize {
-        let length = self.line_content.len();
-
-        (length / screen_width) + if (length % screen_width) != 0 { 1 } else if length == 0 { 1 } else { 0 }
+    fn new(line_type: ScreenLineType, screen_width: usize) -> ScreenLine {
+        ScreenLine {
+            line_type:                line_type,
+            line_codes:               Vec::new(),
+            line_widths:              Vec::new(),
+            cached_screen_width:      screen_width,
+            cached_line_screen_rows:  1,
+            cached_last_row_cols:     0,
+        }
     }
-    fn last_physical_line_len(&self, screen_width: usize) -> usize {
-        let length = self.line_content.len();
+    fn new_from_str(input_text: &str, line_type: ScreenLineType, screen_width: usize) -> ScreenLine {
 
-        length % screen_width
+        let mut line = ScreenLine::new(line_type, screen_width);
+        line.append_str(input_text);
+
+        line
+    }
+    fn append_char(&mut self, to_add: char) {
+
+        let ch_scr_width = match unicode_width::UnicodeWidthChar::width(to_add) {
+            Some(width) => { width   },
+            None        => { return; },  // skip control characters
+        };
+        assert!(ch_scr_width <= 0xFF);
+
+        self.line_codes.push(to_add);
+        self.line_widths.push(ch_scr_width as u8);
+
+        if self.cached_screen_width != 0 {
+
+            if self.cached_last_row_cols + ch_scr_width > self.cached_screen_width {
+
+                self.cached_line_screen_rows += 1;
+                self.cached_last_row_cols = ch_scr_width;
+
+            } else {
+                self.cached_last_row_cols += ch_scr_width;
+            }
+        }
+    }
+    fn append_str(&mut self, to_add: &str) {
+
+        for ch in to_add.chars() {
+            self.append_char(ch);
+        }
+    }
+    fn set_screen_width(&mut self, screen_width: usize) {
+
+        assert!(screen_width > 0);
+
+        self.cached_screen_width = screen_width;
+        self.cached_line_screen_rows = 1;
+        self.cached_last_row_cols = 0;
+
+        for ch_scr_width_u8 in self.line_widths.iter() {
+
+            let ch_scr_width = *ch_scr_width_u8 as usize;
+
+            if self.cached_last_row_cols + ch_scr_width > self.cached_screen_width {
+
+                self.cached_line_screen_rows += 1;
+                self.cached_last_row_cols = ch_scr_width;
+
+            } else {
+                self.cached_last_row_cols += ch_scr_width;
+            }
+        }
+    }
+    fn screen_rows(&mut self, screen_width: usize) -> usize {
+
+        if self.cached_screen_width != screen_width {
+
+            self.set_screen_width(screen_width);
+        }
+        self.cached_line_screen_rows
+    }
+    fn prepare_utf8str_for_cols(&mut self, out_buf: &mut String, screen_width: usize, start_col: usize, col_count: usize, linewrap_gaps: bool) -> usize {
+
+        out_buf.clear();
+
+        let mut cols_to_skip = start_col;
+        let mut out_buf_cols = 0;
+        let mut row_free_cols = screen_width;
+        let mut width_iter = 0;
+
+        'outer_loop: for ch in self.line_codes.iter() {
+
+            let ch_scr_width = self.line_widths[width_iter] as usize;
+
+            let mut gap_cols = if !linewrap_gaps {
+
+                0
+
+            } else if ch_scr_width > row_free_cols {
+
+                let old_free_cols = row_free_cols;
+                row_free_cols = screen_width - ch_scr_width;
+
+                old_free_cols
+
+            } else {
+
+                row_free_cols -= ch_scr_width;
+
+                0
+            };
+
+            if cols_to_skip > 0 && gap_cols > 0 {
+
+                if gap_cols >= cols_to_skip {
+
+                    gap_cols -= cols_to_skip;
+                    cols_to_skip = 0;
+
+                } else {
+
+                    cols_to_skip -= gap_cols;
+                    gap_cols = 0;
+                }
+            }
+
+            if cols_to_skip > 0 {
+
+                assert!(gap_cols == 0);
+
+                let blanks_needed = if cols_to_skip < ch_scr_width { ch_scr_width - cols_to_skip } else { 0 };
+                let mut blanks = 0;
+
+                while blanks < blanks_needed {
+
+                    if out_buf_cols < col_count {
+
+                        out_buf.push(' ');
+                        out_buf_cols += 1;
+
+                    } else {
+
+                        break 'outer_loop;
+                    }
+
+                    blanks += 1;
+                }
+
+                cols_to_skip = if cols_to_skip > ch_scr_width { cols_to_skip - ch_scr_width } else { 0 };
+
+            } else if out_buf_cols + gap_cols + ch_scr_width <= col_count {
+
+                out_buf.push(*ch);
+                out_buf_cols += gap_cols + ch_scr_width;
+
+            } else {
+
+                break;
+            }
+
+            width_iter += 1;
+        }
+
+        assert!(out_buf_cols <= col_count);
+        out_buf_cols
+    }
+}
+
+impl ToString for ScreenLine {
+
+    fn to_string(&self) -> String {
+
+        let mut new_str = "".to_owned();
+
+        for ch in self.line_codes.iter() {
+            new_str.push(*ch);
+        }
+        new_str
     }
 }
 
@@ -529,7 +700,10 @@ pub struct UserInterface {
     screen_height:               usize,
     screen_too_small:            bool,
 
-    redraw_needed:               bool,
+    redraw_text_area:            bool,
+    redraw_status:               bool,
+    redraw_prompt:               bool,
+    redraw_everything:           bool,
 
     max_screen_lines:            usize,
     screen_lines:                VecDeque<ScreenLine>,
@@ -538,11 +712,12 @@ pub struct UserInterface {
     emulator_msg_shown:          bool,
     machine_msg_shown:           bool,
 
-    prompt_text:                 String,
-    prompt_scroll:               usize,
-    prompt_curs_pos:             usize,  // relative to the prompt text
+    prompt_text:                 ScreenLine,
+    prompt_curs_code_pos:        usize,  // cursor position at a Rust char
+    prompt_curs_cell_pos:        usize,  // cursor position at a screen cell
+    prompt_scroll_cells:         usize,
 
-    prompt_history:              VecDeque<String>,
+    prompt_history:              VecDeque<ScreenLine>,
     prompt_history_max_entries:  usize,
     prompt_history_pos:          usize,  // 0 refers to prompt_text
 
@@ -580,7 +755,10 @@ impl UserInterface {
                                      screen_height:               0,
                                      screen_too_small:            true,
 
-                                     redraw_needed:               true,
+                                     redraw_text_area:            false,
+                                     redraw_status:               false,
+                                     redraw_prompt:               false,
+                                     redraw_everything:           true,
 
                                      max_screen_lines:            MAX_SCREEN_LINES,
                                      screen_lines:                VecDeque::with_capacity(MAX_SCREEN_LINES),
@@ -589,9 +767,10 @@ impl UserInterface {
                                      emulator_msg_shown:          true,
                                      machine_msg_shown:           true,
 
-                                     prompt_text:                 "".to_owned(),
-                                     prompt_scroll:               0,
-                                     prompt_curs_pos:             0,
+                                     prompt_text:                 ScreenLine::new(ScreenLineType::EmulatorMessage, 0),
+                                     prompt_curs_code_pos:        0,
+                                     prompt_curs_cell_pos:        0,
+                                     prompt_scroll_cells:         0,
 
                                      prompt_history:              VecDeque::with_capacity(MAX_HISTORY_ENTRIES),
                                      prompt_history_max_entries:  MAX_HISTORY_ENTRIES,
@@ -661,37 +840,37 @@ impl UserInterface {
             EmulatorStatus::PoweredOn => {
                 if !self.machine_powered_on {
                     self.machine_powered_on = true;
-                    self.redraw_needed = true;
+                    self.redraw_everything = true;
                 }
             },
             EmulatorStatus::PoweredOff => {
                 if self.machine_powered_on {
                     self.machine_powered_on = false;
-                    self.redraw_needed = true;
+                    self.redraw_everything = true;
                 }
             },
             EmulatorStatus::Paused => {
                 if !self.machine_paused {
                     self.machine_paused = true;
-                    self.redraw_needed = true;
+                    self.redraw_everything = true;
                 }
             },
             EmulatorStatus::NotPaused => {
                 if self.machine_paused {
                     self.machine_paused = false;
-                    self.redraw_needed = true;
+                    self.redraw_everything = true;
                 }
             },
             EmulatorStatus::CpuHalted => {
                 if !self.cpu_halted {
                     self.cpu_halted = true;
-                    self.redraw_needed = true;
+                    self.redraw_everything = true;
                 }
             },
             EmulatorStatus::CpuNotHalted => {
                 if self.cpu_halted {
                     self.cpu_halted = false;
-                    self.redraw_needed = true;
+                    self.redraw_everything = true;
                 }
             },
         }
@@ -722,22 +901,22 @@ impl UserInterface {
 
                         pancurses::Input::Unknown(input_code) => {
                             match input_code {
-                                155 => { self.prompt_handle_enter_key(emu_cmd_tx); },        // Enter (keypad, w32)
+                                155 => { self.prompt_handle_enter_key(emu_cmd_tx); },                        // Enter (keypad, w32)
                                 _   => { },
                             }
                         },
 
                         pancurses::Input::Character(input_char) => {
-                            if util::is_ascii_printable(input_char as u32) {
-                                self.prompt_insert_char(util::ascii_to_printable_char(input_char as u8));
-                            } else {
+                            if (input_char as u32) < 0x20 {
                                 match input_char as u8 {
-                                    0x08  => { self.prompt_handle_backspace_key(); },                    // Backspace (w32)
-                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },  // CTRL+L
-                                    0x0D  => { self.prompt_handle_enter_key(emu_cmd_tx); },  // Enter
-                                    0x15  => { self.prompt_handle_ctrl_u(); },                           // CTRL+U
+                                    0x08  => { self.prompt_handle_backspace_key(); },                        // Backspace (w32)
+                                    0x0C  => { self.window.clearok(true); self.redraw_everything = true; },  // CTRL+L
+                                    0x0D  => { self.prompt_handle_enter_key(emu_cmd_tx); },                  // Enter
+                                    0x15  => { self.prompt_handle_ctrl_u(); },                               // CTRL+U
                                     _     => { },
                                 }
+                            } else {
+                                self.prompt_insert_char(input_char);
                             }
                         },
 
@@ -766,10 +945,10 @@ impl UserInterface {
                 self.screen_too_small = true;
             } else {
                 self.screen_too_small = false;
-                self.prompt_scroll = 0;
+                self.prompt_scroll_cells = 0;
                 self.scroll_prompt_if_needed();
             }
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         }
     }
     pub fn execute_command(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, input_str: &str) {
@@ -1035,10 +1214,7 @@ impl UserInterface {
             match line.line_type {
                 ScreenLineType::MachineMessage {..} => { },
                 _ => {
-                    new_screen_lines.push_back(ScreenLine {
-                                                   line_type:    line.line_type.clone(),
-                                                   line_content: line.line_content.to_owned(),
-                                               });
+                    new_screen_lines.push_back(line.clone());
                 },
             }
         }
@@ -1051,10 +1227,7 @@ impl UserInterface {
             match line.line_type {
                 ScreenLineType::EmulatorMessage => { },
                 _ => {
-                    new_screen_lines.push_back(ScreenLine {
-                                                   line_type:    line.line_type.clone(),
-                                                   line_content: line.line_content.to_owned(),
-                                               });
+                    new_screen_lines.push_back(line.clone());
                 },
             }
         }
@@ -1206,7 +1379,7 @@ impl UserInterface {
     fn send_to_console(&mut self, _input_str: String) {
         self.emulator_message("Serial console interface not yet implemented.");
     }
-    pub fn add_screen_line(&mut self, line_content: String, line_type: ScreenLineType) {
+    pub fn add_screen_line(&mut self, line_content: &str, line_type: ScreenLineType) {
         enum Action {
             SimplyAppend,
             AppendAndSwap,
@@ -1242,38 +1415,34 @@ impl UserInterface {
         self.screen_lines.truncate(self.max_screen_lines - 1);
         match action {
             Action::SimplyAppend => {
-                let new_line = ScreenLine {
-                                   line_type:    line_type,
-                                   line_content: line_content,
-                               };
+                let mut new_line = ScreenLine::new_from_str(line_content, line_type, self.screen_width);
+
                 if self.lines_scroll > 0 {
-                    self.lines_scroll += new_line.physical_lines(self.screen_width);
+                    self.lines_scroll += new_line.screen_rows(self.screen_width);
                 }
                 self.screen_lines.push_front(new_line);
             },
             Action::AppendAndSwap => {
-                let new_line = ScreenLine {
-                                   line_type:    line_type,
-                                   line_content: line_content,
-                               };
+                let mut new_line = ScreenLine::new_from_str(line_content, line_type, self.screen_width);
+
                 if self.lines_scroll > 0 {
-                    self.lines_scroll += new_line.physical_lines(self.screen_width);
+                    self.lines_scroll += new_line.screen_rows(self.screen_width);
                 }
                 self.screen_lines.push_front(new_line);
                 self.screen_lines.swap(0, 1);
             },
             Action::AppendToLast => {
-                let last_line_mut = self.screen_lines.front_mut().expect("if it didn't exist, we wouldn't be appending to it");
-                let last_line_old_phys = last_line_mut.physical_lines(self.screen_width);
+                let mut last_line_mut = self.screen_lines.front_mut().expect("if it didn't exist, we wouldn't be appending to it");
+                let last_line_old_phys = last_line_mut.screen_rows(self.screen_width);
 
-                last_line_mut.line_content.push_str(line_content.as_str());
+                last_line_mut.append_str(line_content);
                 last_line_mut.line_type = line_type;
 
-                let last_line_new_phys = last_line_mut.physical_lines(self.screen_width);
-                let phys_lines_added = last_line_new_phys - last_line_old_phys;
+                let last_line_new_phys = last_line_mut.screen_rows(self.screen_width);
+                let screen_rows_added = last_line_new_phys - last_line_old_phys;
 
-                if (phys_lines_added > 0) && (self.lines_scroll > 0) {
-                    self.lines_scroll += phys_lines_added;
+                if (screen_rows_added > 0) && (self.lines_scroll > 0) {
+                    self.lines_scroll += screen_rows_added;
                 }
             },
         }
@@ -1281,33 +1450,22 @@ impl UserInterface {
             self.lines_added_scrolled_up = true;
         }
 
-        self.redraw_needed = true;
+        self.redraw_everything = true;
     }
     fn emulator_message(&mut self, line_content: &str) {
-        // For the sake of simplicity, we only allow ASCII:
-        let mut filtered_line_content = String::new();
-
-        for character in line_content.chars() {
-            if util::is_ascii_printable(character as u32) {
-                filtered_line_content.push(util::ascii_to_printable_char(character as u8));
-            } else {
-                filtered_line_content.push(util::ascii_to_printable_char(0));
-            }
-        }
-
-        self.add_screen_line(filtered_line_content, ScreenLineType::EmulatorMessage);
+        self.add_screen_line(line_content, ScreenLineType::EmulatorMessage);
     }
     fn machine_line_add_char(&mut self, char_to_add: char) {
-        self.add_screen_line(format!("{}", char_to_add), ScreenLineType::MachineMessage { complete: false });
+        self.add_screen_line(format!("{}", char_to_add).as_str(), ScreenLineType::MachineMessage { complete: false });
     }
     fn machine_line_finalize(&mut self) {
-        self.add_screen_line("".to_owned(), ScreenLineType::MachineMessage { complete: true });
+        self.add_screen_line("", ScreenLineType::MachineMessage { complete: true });
     }
     fn scroll_lines_up(&mut self) {
         // The user can request to scroll as much as they wish, the lines rendering
         // routine will then normalize this value.
         self.lines_scroll += self.screen_height / 2;
-        self.redraw_needed = true;
+        self.redraw_everything = true;
     }
     fn scroll_lines_down(&mut self) {
         if self.lines_scroll >= (self.screen_height / 2) {
@@ -1320,50 +1478,130 @@ impl UserInterface {
             self.lines_added_scrolled_up = false;
         }
 
-        self.redraw_needed = true;
+        self.redraw_everything = true;
+    }
+    // Sanitize the self.prompt_scroll_cells value so that it isn't inside
+    // of a wide character.
+    fn sanitize_prompt_scroll(&mut self) {
+
+        let suggested_cell_scroll = self.prompt_scroll_cells;
+        let mut found_cells = 0;
+
+        let current_prompt_text = match self.prompt_history_pos {
+            0 => { &self.prompt_text },
+            _ => { &self.prompt_history[self.prompt_history_pos - 1] },
+        };
+
+        for ch_scr_width_u8 in current_prompt_text.line_widths.iter() {
+
+            let ch_scr_width = *ch_scr_width_u8 as usize;
+
+            found_cells += ch_scr_width;
+
+            if found_cells >= suggested_cell_scroll {
+                break;
+            }
+        }
+        self.prompt_scroll_cells = found_cells;
+    }
+    // Calculate self.prompt_curs_cell_pos based on self.prompt_curs_codes_pos
+    fn calc_prompt_curs_cell_pos(&mut self) {
+
+        let mut found_cells = 0;
+        let mut found_codes = 0;
+
+        let current_prompt_text = match self.prompt_history_pos {
+            0 => { &self.prompt_text },
+            _ => { &self.prompt_history[self.prompt_history_pos - 1] },
+        };
+
+        for ch_scr_width_u8 in current_prompt_text.line_widths.iter() {
+
+            let ch_scr_width = *ch_scr_width_u8 as usize;
+
+            found_codes += 1;
+            found_cells += ch_scr_width;
+
+            if found_codes == self.prompt_curs_code_pos {
+                break;
+            }
+        }
+        self.prompt_curs_cell_pos = found_cells;
     }
     fn scroll_prompt_if_needed(&mut self) {
         // If the cursor is outside of the visible range of the prompt, we need
         // to scroll it.
         //
-        if (self.prompt_curs_pos + PROMPT_TEXT_OFFSET >= self.screen_width + self.prompt_scroll) ||
-           (self.prompt_curs_pos < self.prompt_scroll) {
+        if (self.prompt_curs_cell_pos + PROMPT_TEXT_OFFSET >= self.screen_width + self.prompt_scroll_cells) ||
+           (self.prompt_curs_cell_pos < self.prompt_scroll_cells) {
 
-            self.prompt_scroll = 0;
-            while self.prompt_curs_pos + PROMPT_TEXT_OFFSET - self.prompt_scroll >= self.screen_width {
-                self.prompt_scroll += self.screen_width / 2;
+            self.prompt_scroll_cells = 0;
+            while self.prompt_curs_cell_pos + PROMPT_TEXT_OFFSET - self.prompt_scroll_cells >= self.screen_width {
+                self.prompt_scroll_cells += self.screen_width / 2;
+                self.sanitize_prompt_scroll();
             }
         }
     }
-    fn prompt_insert_char(&mut self, character: char) {
+    fn prompt_insert_char(&mut self, ch: char) {
+
+        let ch_scr_width = match unicode_width::UnicodeWidthChar::width(ch) {
+            Some(width) => { width   },
+            None        => { return; },  // skip control characters
+        };
+        assert!(ch_scr_width <= 0xFF);
+
         if self.prompt_history_pos > 0 {
             self.prompt_text = self.prompt_history[self.prompt_history_pos - 1].clone();
             self.prompt_history_pos = 0;
         }
-        self.prompt_text.insert(self.prompt_curs_pos, character);
-        self.redraw_needed = true;
+        self.prompt_text.line_codes.insert(self.prompt_curs_code_pos, ch);
+        self.prompt_text.line_widths.insert(self.prompt_curs_code_pos, ch_scr_width as u8);
+        self.redraw_everything = true;
 
-        self.prompt_curs_pos += 1;
+        self.prompt_curs_code_pos += 1;
+        self.prompt_curs_cell_pos += ch_scr_width;
         self.scroll_prompt_if_needed();
     }
-    fn prompt_move_cursor_left(&mut self) {
-        if self.prompt_curs_pos > 0 {
-            self.prompt_curs_pos -= 1;
+    fn prompt_move_cursor_right(&mut self) {
+        let current_prompt_text = match self.prompt_history_pos {
+            0 => { &self.prompt_text },
+            _ => { &self.prompt_history[self.prompt_history_pos - 1] },
+        };
+        let prompt_text_len = current_prompt_text.line_codes.len();
+
+        if self.prompt_curs_code_pos < prompt_text_len {
+            let ch_scr_width = current_prompt_text.line_widths[self.prompt_curs_code_pos] as usize;
+
+            self.prompt_curs_code_pos += 1;
+            self.prompt_curs_cell_pos += ch_scr_width;
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         } else {
             pancurses::beep();
         }
     }
-    fn prompt_move_cursor_right(&mut self) {
-        let prompt_text_len = match self.prompt_history_pos {
-            0 => { self.prompt_text.len() },
-            _ => { self.prompt_history[self.prompt_history_pos - 1].len() },
+    fn prompt_move_cursor_left(&mut self) {
+        let current_prompt_text = match self.prompt_history_pos {
+            0 => { &self.prompt_text },
+            _ => { &self.prompt_history[self.prompt_history_pos - 1] },
         };
-        if self.prompt_curs_pos < prompt_text_len {
-            self.prompt_curs_pos += 1;
+        let prompt_text_len = current_prompt_text.line_codes.len();
+
+        if self.prompt_curs_code_pos > 0 {
+
+            self.prompt_curs_code_pos -= 1;
+            if self.prompt_curs_code_pos >= prompt_text_len {
+
+                self.prompt_curs_code_pos = prompt_text_len;
+                self.calc_prompt_curs_cell_pos();
+
+            } else {
+
+                let ch_scr_width = current_prompt_text.line_widths[self.prompt_curs_code_pos] as usize;
+                self.prompt_curs_cell_pos -= ch_scr_width;
+            }
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         } else {
             pancurses::beep();
         }
@@ -1371,12 +1609,13 @@ impl UserInterface {
     fn prompt_move_cursor_up(&mut self) {
         if self.prompt_history_pos < self.prompt_history.len() {
             self.prompt_history_pos += 1;
-            self.prompt_curs_pos = match self.prompt_history_pos {
-                                       0 => { self.prompt_text.as_str().len() },
-                                       _ => { self.prompt_history[self.prompt_history_pos - 1].len() },
-                                   };
+            self.prompt_curs_code_pos = match self.prompt_history_pos {
+                0 => { self.prompt_text.line_codes.len() },
+                _ => { self.prompt_history[self.prompt_history_pos - 1].line_codes.len() },
+            };
+            self.calc_prompt_curs_cell_pos();
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         } else {
             pancurses::beep();
         }
@@ -1384,94 +1623,107 @@ impl UserInterface {
     fn prompt_move_cursor_down(&mut self) {
         if self.prompt_history_pos > 0 {
             self.prompt_history_pos -= 1;
-            self.prompt_curs_pos = match self.prompt_history_pos {
-                                       0 => { self.prompt_text.as_str().len() },
-                                       _ => { self.prompt_history[self.prompt_history_pos - 1].len() },
-                                   };
+            self.prompt_curs_code_pos = match self.prompt_history_pos {
+                0 => { self.prompt_text.line_codes.len() },
+                _ => { self.prompt_history[self.prompt_history_pos - 1].line_codes.len() },
+            };
+            self.calc_prompt_curs_cell_pos();
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         } else {
             pancurses::beep();
         }
     }
     fn prompt_handle_backspace_key(&mut self) {
-        if self.prompt_curs_pos > 0 {
+        if self.prompt_curs_code_pos > 0 {
+
             if self.prompt_history_pos > 0 {
                 self.prompt_text = self.prompt_history[self.prompt_history_pos - 1].clone();
                 self.prompt_history_pos = 0;
             }
-            self.prompt_text.remove(self.prompt_curs_pos - 1);
-            self.prompt_curs_pos -= 1;
+            let ch_scr_width = self.prompt_text.line_widths[self.prompt_curs_code_pos - 1] as usize;
+
+            self.prompt_text.line_codes.remove(self.prompt_curs_code_pos - 1);
+            self.prompt_text.line_widths.remove(self.prompt_curs_code_pos - 1);
+            self.prompt_curs_code_pos -= 1;
+            self.prompt_curs_cell_pos -= ch_scr_width;
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         } else {
             pancurses::beep();
         }
     }
     fn prompt_handle_delete_key(&mut self) {
         let prompt_text_len = match self.prompt_history_pos {
-            0 => { self.prompt_text.len() },
-            _ => { self.prompt_history[self.prompt_history_pos - 1].len() },
+            0 => { self.prompt_text.line_codes.len() },
+            _ => { self.prompt_history[self.prompt_history_pos - 1].line_codes.len() },
         };
-        if self.prompt_curs_pos < prompt_text_len {
+        if self.prompt_curs_code_pos < prompt_text_len {
             if self.prompt_history_pos > 0 {
                 self.prompt_text = self.prompt_history[self.prompt_history_pos - 1].clone();
                 self.prompt_history_pos = 0;
             }
-            self.prompt_text.remove(self.prompt_curs_pos);
-            self.redraw_needed = true;
+            self.prompt_text.line_codes.remove(self.prompt_curs_code_pos);
+            self.prompt_text.line_widths.remove(self.prompt_curs_code_pos);
+            self.redraw_everything = true;
         } else {
             pancurses::beep();
         }
     }
     fn prompt_handle_ctrl_u(&mut self) {
-        if self.prompt_curs_pos > 0 {
+        if self.prompt_curs_code_pos > 0 {
             if self.prompt_history_pos > 0 {
                 self.prompt_text = self.prompt_history[self.prompt_history_pos - 1].clone();
                 self.prompt_history_pos = 0;
             }
-            let to_keep = {
-                let (_, upper_half) = self.prompt_text.as_str().split_at(self.prompt_curs_pos);
-                upper_half.to_owned()
-            };
 
-            self.prompt_text = to_keep;
-            self.prompt_curs_pos = 0;
+            let new_codes  = self.prompt_text.line_codes.split_off(self.prompt_curs_code_pos);
+            let new_widths = self.prompt_text.line_widths.split_off(self.prompt_curs_code_pos);
+
+            self.prompt_text.line_codes = new_codes;
+            self.prompt_text.line_widths = new_widths;
+
+            self.prompt_curs_code_pos = 0;
+            self.prompt_curs_cell_pos = 0;
 
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         }
     }
     fn prompt_handle_home_key(&mut self) {
-        if self.prompt_curs_pos != 0 {
-            self.prompt_curs_pos = 0;
+        if self.prompt_curs_code_pos != 0 {
+            self.prompt_curs_code_pos = 0;
+            self.prompt_curs_cell_pos = 0;
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         }
     }
     fn prompt_handle_end_key(&mut self) {
         let prompt_text_len = match self.prompt_history_pos {
-            0 => { self.prompt_text.len() },
-            _ => { self.prompt_history[self.prompt_history_pos - 1].len() },
+            0 => { self.prompt_text.line_codes.len() },
+            _ => { self.prompt_history[self.prompt_history_pos - 1].line_codes.len() },
         };
-        if self.prompt_curs_pos != prompt_text_len {
-            self.prompt_curs_pos = prompt_text_len;
+        if self.prompt_curs_code_pos != prompt_text_len {
+            self.prompt_curs_code_pos = prompt_text_len;
+            self.calc_prompt_curs_cell_pos();
             self.scroll_prompt_if_needed();
-            self.redraw_needed = true;
+            self.redraw_everything = true;
         }
     }
     fn prompt_handle_enter_key(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
-        let entered_text = match self.prompt_history_pos {
+        let entered_text_line = match self.prompt_history_pos {
             0 => { self.prompt_text.clone() },
             _ => { self.prompt_history[self.prompt_history_pos - 1].clone() },
         };
+        let entered_text = entered_text_line.to_string();
 
-        self.prompt_add_to_history(entered_text.as_str());
-        self.prompt_text = "".to_owned();
-        self.prompt_curs_pos = 0;
+        self.prompt_add_to_history(&entered_text_line);
+        self.prompt_text = ScreenLine::new(ScreenLineType::EmulatorMessage, 0);
+        self.prompt_curs_code_pos = 0;
+        self.prompt_curs_cell_pos = 0;
         self.prompt_history_pos = 0;
         self.scroll_prompt_if_needed();
-        self.redraw_needed = true;
+        self.redraw_everything = true;
 
         if (entered_text.len() > 0) && (entered_text.chars().next().expect("somehow there isn't a first character even though entered_text.len() > 0 evaluated to true") == '/') {
             let (_, command_str) = entered_text.as_str().split_at(1);
@@ -1485,11 +1737,11 @@ impl UserInterface {
             self.send_to_console(entered_text);
         }
     }
-    fn prompt_add_to_history(&mut self, to_add: &str) {
+    fn prompt_add_to_history(&mut self, to_add: &ScreenLine) {
         // Is this line identical to the last one in history?  If yes, ignore.
         match self.prompt_history.front() {
             Some(last_line) => {
-                if to_add == last_line {
+                if to_add.line_codes == last_line.line_codes {
                     return;
                 }
             },
@@ -1497,11 +1749,11 @@ impl UserInterface {
         }
 
         self.prompt_history.truncate(self.prompt_history_max_entries - 1);
-        self.prompt_history.push_front(to_add.to_owned());
+        self.prompt_history.push_front(to_add.clone());
     }
     pub fn update_screen(&mut self) {
 
-        if self.redraw_needed {
+        if self.redraw_everything {
 
             self.window.erase();
 
@@ -1515,7 +1767,7 @@ impl UserInterface {
             }
 
             self.window.refresh();
-            self.redraw_needed = false;
+            self.redraw_everything = false;
         }
     }
     // Description:
@@ -1524,11 +1776,11 @@ impl UserInterface {
     // window.  It draws them from bottom to top.
     //
     fn render_lines(&mut self) {
-        let avail_phys_lines = self.screen_height - LINES_BOTTOM_OFFSET - LINES_TOP_OFFSET;
-        let mut phys_lines_to_draw = 0;
-        let mut phys_lines_to_scroll_over = 0;
+        let avail_screen_rows = self.screen_height - LINES_BOTTOM_OFFSET - LINES_TOP_OFFSET;
+        let mut screen_rows_to_draw = 0;
+        let mut screen_rows_to_scroll_over = 0;
 
-        for virt_line in self.screen_lines.iter() {
+        for virt_line in self.screen_lines.iter_mut() {
             // Skip lines which aren't to be shown:
             match virt_line.line_type {
                 ScreenLineType::EmulatorMessage => {
@@ -1542,33 +1794,33 @@ impl UserInterface {
                     }
                 },
             }
-            let cur_line_phys_lines = virt_line.physical_lines(self.screen_width);
+            let cur_line_screen_rows = virt_line.screen_rows(self.screen_width);
 
-            if phys_lines_to_draw < avail_phys_lines {
-                phys_lines_to_draw += cur_line_phys_lines;
-            } else if phys_lines_to_scroll_over < self.lines_scroll {
-                if phys_lines_to_draw > avail_phys_lines {
-                    phys_lines_to_scroll_over = phys_lines_to_draw - avail_phys_lines;
-                    phys_lines_to_draw -= phys_lines_to_scroll_over;
+            if screen_rows_to_draw < avail_screen_rows {
+                screen_rows_to_draw += cur_line_screen_rows;
+            } else if screen_rows_to_scroll_over < self.lines_scroll {
+                if screen_rows_to_draw > avail_screen_rows {
+                    screen_rows_to_scroll_over = screen_rows_to_draw - avail_screen_rows;
+                    screen_rows_to_draw -= screen_rows_to_scroll_over;
                 }
-                phys_lines_to_scroll_over += cur_line_phys_lines;
+                screen_rows_to_scroll_over += cur_line_screen_rows;
             } else {
                 break;
             }
         }
 
         // Sanitize the lines_scroll variable:
-        if self.lines_scroll > phys_lines_to_scroll_over {
-            self.lines_scroll = phys_lines_to_scroll_over;
+        if self.lines_scroll > screen_rows_to_scroll_over {
+            self.lines_scroll = screen_rows_to_scroll_over;
         }
 
-        if phys_lines_to_draw > 0 {
-            let mut y_pos = (avail_phys_lines as i32) - 1 + (LINES_TOP_OFFSET as i32);
-            if avail_phys_lines > phys_lines_to_draw {
-                y_pos -= (avail_phys_lines as i32) - (phys_lines_to_draw as i32);
+        if screen_rows_to_draw > 0 {
+            let mut y_pos = (avail_screen_rows as i32) - 1 + (LINES_TOP_OFFSET as i32);
+            if avail_screen_rows > screen_rows_to_draw {
+                y_pos -= (avail_screen_rows as i32) - (screen_rows_to_draw as i32);
             }
 
-            for virt_line in self.screen_lines.iter() {
+            for virt_line in self.screen_lines.iter_mut() {
                 // Skip lines which aren't to be shown:
                 match virt_line.line_type {
                     ScreenLineType::EmulatorMessage => {
@@ -1582,54 +1834,46 @@ impl UserInterface {
                         }
                     },
                 }
-                let mut cur_line_phys_lines = virt_line.physical_lines(self.screen_width);
-                let cur_line_text;
+                let mut cur_line_screen_rows_print = virt_line.screen_rows(self.screen_width);
 
-                if phys_lines_to_scroll_over >= cur_line_phys_lines {
-                    phys_lines_to_scroll_over -= cur_line_phys_lines;
+                if screen_rows_to_scroll_over >= cur_line_screen_rows_print {
+                    screen_rows_to_scroll_over -= cur_line_screen_rows_print;
                     continue;
-                } else if phys_lines_to_scroll_over > 0 {
-                    cur_line_phys_lines -= phys_lines_to_scroll_over;
-                    phys_lines_to_scroll_over = 0;
 
-                    cur_line_text = {
-                        let (to_print, _) = virt_line.line_content.as_str().split_at(cur_line_phys_lines * self.screen_width);
-                        to_print
-                    };
-                } else {
-                    cur_line_text = virt_line.line_content.as_str();
+                } else if screen_rows_to_scroll_over > 0 {
+
+                    cur_line_screen_rows_print -= screen_rows_to_scroll_over;
+                    screen_rows_to_scroll_over = 0;
                 }
-                let cur_line_phys_lines = cur_line_phys_lines;
+                let cur_line_screen_rows_print = cur_line_screen_rows_print;
 
                 let color_pair = match virt_line.line_type {
                     ScreenLineType::EmulatorMessage     => { COLOR_PAIR_EMSG },
                     ScreenLineType::MachineMessage {..} => { COLOR_PAIR_MMSG },
                 };
 
-                let new_y_pos = y_pos - (cur_line_phys_lines as i32) + 1;
 
-                if new_y_pos < LINES_TOP_OFFSET as i32 {
-                    let phys_lines_to_skip = ((LINES_TOP_OFFSET as i32) - new_y_pos) as usize;
+                let new_y_pos = y_pos - (cur_line_screen_rows_print as i32) + 1;
 
-                    self.window.mv(LINES_TOP_OFFSET as i32, 0);
-                    let (_, to_print) = cur_line_text.split_at((phys_lines_to_skip * self.screen_width) - 1);
-                    self.window.attron(pancurses::colorpair::ColorPair(color_pair));
-                    self.window.addstr(to_print);
-                    self.window.attroff(pancurses::colorpair::ColorPair(color_pair));
-
-                    break;
+                let screen_rows_to_skip = if new_y_pos < LINES_TOP_OFFSET as i32 {
+                    ((LINES_TOP_OFFSET as i32) - new_y_pos) as usize
                 } else {
-                    y_pos = new_y_pos;
+                    0
+                };
 
-                    self.window.mv(y_pos, 0);
-                    self.window.attron(pancurses::colorpair::ColorPair(color_pair));
-                    self.window.addstr(cur_line_text);
-                    self.window.attroff(pancurses::colorpair::ColorPair(color_pair));
+                self.window.mv(new_y_pos + screen_rows_to_skip as i32, 0);
 
-                    y_pos -= 1;
-                    if y_pos < LINES_TOP_OFFSET as i32 {
-                        break;
-                    }
+                let mut out_cols_str = String::new();
+                let _out_cols_str_cols = virt_line.prepare_utf8str_for_cols(&mut out_cols_str, self.screen_width, screen_rows_to_skip * self.screen_width, (cur_line_screen_rows_print - screen_rows_to_skip) * self.screen_width, true);
+                let out_cols_str = out_cols_str;
+
+                self.window.attron(pancurses::colorpair::ColorPair(color_pair));
+                self.window.addstr(out_cols_str);
+                self.window.attroff(pancurses::colorpair::ColorPair(color_pair));
+
+                y_pos = new_y_pos - 1;
+                if y_pos < LINES_TOP_OFFSET as i32 {
+                    break;
                 }
             }
         }
@@ -1718,19 +1962,16 @@ impl UserInterface {
 
         self.window.mv((self.screen_height - PROMPT_BOTTOM_OFFSET) as i32 - 1, PROMPT_TEXT_OFFSET as i32);
         let current_prompt_text = match self.prompt_history_pos {
-            0 => { self.prompt_text.as_str() },
-            _ => { self.prompt_history[self.prompt_history_pos - 1].as_str() },
+            0 => { &mut self.prompt_text },
+            _ => { &mut self.prompt_history[self.prompt_history_pos - 1] },
         };
-        let (_, upper_half) = current_prompt_text.split_at(self.prompt_scroll);
-        let to_print = if upper_half.len() < (self.screen_width - PROMPT_TEXT_OFFSET) {
-                           upper_half
-                       } else {
-                           let (to_print, _) = upper_half.split_at(self.screen_width - PROMPT_TEXT_OFFSET);
-                           to_print
-                       };
-        self.window.addstr(to_print);
 
-        self.window.mv((self.screen_height - PROMPT_BOTTOM_OFFSET) as i32 - 1, (self.prompt_curs_pos + PROMPT_TEXT_OFFSET - self.prompt_scroll) as i32);
+        let mut out_cols_str = String::new();
+        let _out_cols_str_cols = current_prompt_text.prepare_utf8str_for_cols(&mut out_cols_str, self.screen_width, self.prompt_scroll_cells, self.screen_width - PROMPT_TEXT_OFFSET, false);
+        let out_cols_str = out_cols_str;
+
+        self.window.addstr(out_cols_str);
+        self.window.mv((self.screen_height - PROMPT_BOTTOM_OFFSET) as i32 - 1, (self.prompt_curs_cell_pos + PROMPT_TEXT_OFFSET - self.prompt_scroll_cells) as i32);
 
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_PROMPT));
     }

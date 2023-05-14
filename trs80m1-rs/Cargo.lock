@@ -200,6 +200,7 @@ dependencies = [
  "pancurses",
  "sdl2",
  "trs80m1-rs-core",
+ "unicode-width",
 ]
 
 [[package]]

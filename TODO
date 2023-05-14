@@ -45,6 +45,9 @@ question marks, and doesn't accept them as valid keyboard input).  As a
 consequence, any filenames specified in the curses-based user interface must
 consist of ascii-only characters.
 
+Edit: As of 2023/05/14, limited Unicode support has been introduced into the
+curses-based TUI (currently only left-to-right is supported).
+
 
 [X] Make the emulator configurable via the curses-based user interface:
 
