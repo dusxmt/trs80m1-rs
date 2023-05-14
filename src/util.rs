@@ -13,81 +13,99 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
-// The message logging mechanism used in the project is having different
-// parts of the code have their own message logging, and having the user
-// interface periodically check for logged messages and collecting them.
+use log::{Record, Level, LevelFilter, Metadata};
+
+use std::vec::Vec;
+use std::sync::Mutex;
+
+// The message logging mechanism used in the project is having a shared
+// message logging buffer that various parts of the code submit messages
+// to, which are then collected by a user interface module and displayed
+// in a scrollable text buffer.
 //
-pub trait MessageLogging {
-    fn log_message(&mut self, message: String);
-
-    fn messages_available(&self) -> bool;
-    fn collect_messages(&mut self) -> Vec<String>;
+struct MessageLoggerState {
+    messages:       Vec<String>,
+    stdouterr_echo: bool,
+}
+pub struct MessageLogger {
+    state:  Mutex<MessageLoggerState>,
 }
 
-// On startup, it's useful to have messages that both end up in the user
-// interface and on the regular start-up screen, in case the program fails
-// during startup:
-pub struct StartupLogger {
-    incomplete_message:  Option<String>,
-
-    logged_messages:     Vec<String>,
-    messages_present:    bool,
-}
-
-impl StartupLogger {
-    pub fn new() -> StartupLogger {
-        StartupLogger {
-            incomplete_message: None,
-
-            logged_messages:    Vec::new(),
-            messages_present:   false,
+impl MessageLogger {
+    pub fn new() -> MessageLogger {
+        MessageLogger {
+            state: Mutex::new(MessageLoggerState {
+                messages:       Vec::new(),
+                stdouterr_echo: true,
+            }),
         }
     }
-    pub fn log_incomplete_message(&mut self, message: String) {
-        print!("{}", message.as_str());
-
-        let incomplete_message = self.incomplete_message.clone();
-        self.incomplete_message = None;
-
-        match incomplete_message {
-            Some(incomplete_message_str) => {
-                self.incomplete_message = Some(format!("{}{}", incomplete_message_str.as_str(), message.as_str()));
+    pub fn set_stdouterr_echo(&self, new_val: bool) {
+        match self.state.lock() {
+            Ok(mut state) => {
+                state.stdouterr_echo = new_val;
             },
-            None => {
-                self.incomplete_message = Some(message);
+            Err(error) => {
+                panic!("Failed to lock message logger state mutex: {}", error);
             },
         }
     }
-}
-
-impl MessageLogging for StartupLogger {
-    fn log_message(&mut self, message: String) {
-        println!("{}", message.as_str());
-
-        let incomplete_message = self.incomplete_message.clone();
-        self.incomplete_message = None;
-
-        match incomplete_message {
-            Some(incomplete_message_str) => {
-                self.logged_messages.push(format!("{}{}", incomplete_message_str.as_str(), message.as_str()));
+    pub fn collect_messages(&self) -> Option<Vec<String>> {
+        match self.state.lock() {
+            Ok(mut state) => {
+                if state.messages.len() > 0 {
+                    Some(state.messages.drain(..).collect())
+                } else {
+                    None
+                }
             },
-            None => {
-                self.logged_messages.push(message);
+            Err(error) => {
+                panic!("Failed to lock message logger state mutex: {}", error);
             },
         }
-        self.messages_present = true;
     }
-    fn messages_available(&self) -> bool {
-        self.messages_present
-    }
-    fn collect_messages(&mut self) -> Vec<String> {
-        let logged_thus_far = self.logged_messages.drain(..).collect();
-        self.messages_present = false;
-
-        logged_thus_far
+    pub fn set_logger(&'static self) -> Result<(), log::SetLoggerError> {
+        log::set_logger(self)?;
+        log::set_max_level(LevelFilter::Info);
+        Ok(())
     }
 }
 
+impl log::Log for MessageLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Info
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+
+            let message = if record.level() == Level::Info {
+                format!("{}", record.args())
+            } else {
+                format!("{}: {}", record.level(), record.args())
+            };
+
+            match self.state.lock() {
+                Ok(mut state) => {
+                    if state.stdouterr_echo {
+                        if record.level() < Level::Info {
+                            eprintln!("{}", message);
+                        } else {
+                            println!("{}", message);
+                        }
+                    }
+                    state.messages.push(message);
+                },
+                Err(error) => {
+                    eprintln!("{}", message);
+                    panic!("Failed to lock message logger state mutex: {}", error);
+                },
+            }
+        }
+    }
+
+    fn flush(&self) {}
+}
 
 // A routine which checks whether the given code is a printable ASCII character.
 //
@@ -328,4 +346,8 @@ pub fn parse_u32_from_str(input_in: &str) -> Option<u32> {
     }
 
     Some(accumulator)
+}
+
+pub trait Sink<T> {
+    fn push(&mut self, value: T);
 }

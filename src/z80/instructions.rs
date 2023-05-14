@@ -44,10 +44,11 @@
 // Parentheses help code readability, which is especially important here.
 #![allow(unused_parens)]
 
+use log::{info, warn, error};
+
 use crate::memory;
 use crate::memory::MemIO;
 use crate::memory::PeripheralIO;
-use crate::util::MessageLogging;
 use crate::z80::cpu;
 
 pub struct Instruction {
@@ -8270,17 +8271,17 @@ pub static INSTRUCTION_SET: InstructionSet = InstructionSet {
 };
 
 // A function to load the instruction at the given address:
-pub fn load_instruction(base: u16, memory: &mut memory::MemorySystem, cycle_timestamp: u32)
+pub fn load_instruction(base: u16, memory: &mut memory::MemorySystem)
                        -> &'static Instruction {
-    let first_byte = memory.read_byte(base, cycle_timestamp);
+    let first_byte = memory.read_byte(base);
     match first_byte {
         0xCB => {
-            let opcode = memory.read_byte(base + 1, cycle_timestamp);
+            let opcode = memory.read_byte(base + 1);
 
             &INSTRUCTION_SET.bit[opcode as usize]
         },
         0xED => {
-            let opcode = memory.read_byte(base + 1, cycle_timestamp);
+            let opcode = memory.read_byte(base + 1);
 
             if (opcode >= 0x40) && (opcode <= 0x7F) {
                 &INSTRUCTION_SET.extended[(opcode - 0x40) as usize]
@@ -8291,18 +8292,18 @@ pub fn load_instruction(base: u16, memory: &mut memory::MemorySystem, cycle_time
             }
         },
         0xDD => {
-            let second_byte = memory.read_byte(base + 1, cycle_timestamp);
+            let second_byte = memory.read_byte(base + 1);
             if second_byte == 0xCB {
-                let opcode = memory.read_byte(base + 3, cycle_timestamp);
+                let opcode = memory.read_byte(base + 3);
                 &INSTRUCTION_SET.ix_bit[opcode as usize]
             } else {
                 &INSTRUCTION_SET.ix[second_byte as usize]
             }
         },
         0xFD => {
-            let second_byte = memory.read_byte(base + 1, cycle_timestamp);
+            let second_byte = memory.read_byte(base + 1);
             if second_byte == 0xCB {
-                let opcode = memory.read_byte(base + 3, cycle_timestamp);
+                let opcode = memory.read_byte(base + 3);
                 &INSTRUCTION_SET.iy_bit[opcode as usize]
             } else {
                 &INSTRUCTION_SET.iy[second_byte as usize]
@@ -8447,18 +8448,18 @@ macro_rules! even_parity_8bit {
 
 // Push a byte onto the stack:
 macro_rules! stack_push_8bit {
-    ($regs:expr, $memory:expr, $val:expr, $cycle_timestamp:expr) => {
+    ($regs:expr, $memory:expr, $val:expr) => {
         {
             $regs.sp -= 1;
-            $memory.write_byte($regs.sp, $val, $cycle_timestamp);
+            $memory.write_byte($regs.sp, $val);
         }
     };
 }
 // Pop a byte from the stack:
 macro_rules! stack_pop_8bit {
-    ($regs:expr, $memory:expr, $cycle_timestamp:expr) => {
+    ($regs:expr, $memory:expr) => {
         {
-            let value = $memory.read_byte($regs.sp, $cycle_timestamp);
+            let value = $memory.read_byte($regs.sp);
             $regs.sp += 1;
 
             value
@@ -8469,18 +8470,18 @@ macro_rules! stack_pop_8bit {
 // Push a 16-bit word onto the stack:
 #[macro_export]
 macro_rules! stack_push_16bit {
-    ($regs:expr, $memory:expr, $val:expr, $cycle_timestamp:expr) => {
+    ($regs:expr, $memory:expr, $val:expr) => {
         {
             $regs.sp -= 2;
-            $memory.write_word($regs.sp, $val, $cycle_timestamp);
+            $memory.write_word($regs.sp, $val);
         }
     };
 }
 // Pop a 16-bit word from the stack:
 macro_rules! stack_pop_16bit {
-    ($regs:expr, $memory:expr, $cycle_timestamp:expr) => {
+    ($regs:expr, $memory:expr) => {
         {
-            let value = $memory.read_word($regs.sp, $cycle_timestamp);
+            let value = $memory.read_word($regs.sp);
             $regs.sp += 2;
 
             value
@@ -8821,7 +8822,7 @@ fn inst_djnz_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     if new_val != 0 {
-        let offset = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        let offset = memory.read_byte(cpu.regs.pc + 1);
         cpu.regs.pc = add_16bit_signed_8bit!(cpu.regs.pc + 2, offset);
         cpu.added_delay = 5;
     } else {
@@ -8831,7 +8832,7 @@ fn inst_djnz_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 fn inst_jr_nz_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.zero {
-        let offset = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        let offset = memory.read_byte(cpu.regs.pc + 1);
         cpu.regs.pc = add_16bit_signed_8bit!(cpu.regs.pc + 2, offset);
         cpu.added_delay = 5;
     } else {
@@ -8841,7 +8842,7 @@ fn inst_jr_nz_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 fn inst_jr_nc_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.carry {
-        let offset = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        let offset = memory.read_byte(cpu.regs.pc + 1);
         cpu.regs.pc = add_16bit_signed_8bit!(cpu.regs.pc + 2, offset);
         cpu.added_delay = 5;
     } else {
@@ -8849,25 +8850,25 @@ fn inst_jr_nc_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     }
 }
 fn inst_ld_bc_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_word(cpu.regs.pc + 1);
     cpu.regs.bc = imm;
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_de_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_word(cpu.regs.pc + 1);
     cpu.regs.de = imm;
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_hl_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_word(cpu.regs.pc + 1);
     cpu.regs.hl = imm;
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_sp_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_word(cpu.regs.pc + 1);
     cpu.regs.sp = imm;
 
     cpu.regs.pc += 3;
@@ -8875,28 +8876,28 @@ fn inst_ld_sp_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_bc_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let to_write = cpu.regs.a;
     let address  = cpu.regs.bc;
-    memory.write_byte(address, to_write, cpu.cycle_timestamp);
+    memory.write_byte(address, to_write);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_mem_de_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let to_write = cpu.regs.a;
     let address  = cpu.regs.de;
-    memory.write_byte(address, to_write, cpu.cycle_timestamp);
+    memory.write_byte(address, to_write);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_mem_im16_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let to_write = cpu.regs.hl;
-    let address  = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
-    memory.write_word(address, to_write, cpu.cycle_timestamp);
+    let address  = memory.read_word(cpu.regs.pc + 1);
+    memory.write_word(address, to_write);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_im16_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let to_write = cpu.regs.a;
-    let address  = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
-    memory.write_byte(address, to_write, cpu.cycle_timestamp);
+    let address  = memory.read_word(cpu.regs.pc + 1);
+    memory.write_byte(address, to_write);
 
     cpu.regs.pc += 3;
 }
@@ -8959,10 +8960,10 @@ fn inst_inc_h(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_inc_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let address = cpu.regs.hl;
-    let old_val = memory.read_byte(address, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(address);
     let result = inc_8bit!(cpu.regs.flags, old_val);
 
-    memory.write_byte(address, result, cpu.cycle_timestamp);
+    memory.write_byte(address, result);
     cpu.regs.pc += 1;
 }
 fn inst_dec_b(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -8988,34 +8989,34 @@ fn inst_dec_h(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_dec_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let address = cpu.regs.hl;
-    let old_val = memory.read_byte(address, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(address);
     let result = dec_8bit!(cpu.regs.flags, old_val);
 
-    memory.write_byte(address, result, cpu.cycle_timestamp);
+    memory.write_byte(address, result);
     cpu.regs.pc += 1;
 }
 fn inst_ld_b_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     set_high_of_16bit!(cpu.regs.bc, imm);
 
     cpu.regs.pc += 2;
 }
 fn inst_ld_d_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     set_high_of_16bit!(cpu.regs.de, imm);
 
     cpu.regs.pc += 2;
 }
 fn inst_ld_h_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     set_high_of_16bit!(cpu.regs.hl, imm);
 
     cpu.regs.pc += 2;
 }
 fn inst_ld_mem_hl_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let address = cpu.regs.hl;
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
-    memory.write_byte(address, imm, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
+    memory.write_byte(address, imm);
 
     cpu.regs.pc += 2;
 }
@@ -9077,7 +9078,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0x66;
                                 cpu.regs.flags.carry = true;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                         // Half-Carry set:
@@ -9090,7 +9091,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0x66;
                                 cpu.regs.flags.carry = true;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                     };
@@ -9108,7 +9109,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0x66;
                                 cpu.regs.flags.carry = true;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                         // Half-Carry set:
@@ -9117,7 +9118,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0x66;
                                 cpu.regs.flags.carry = true;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                     };
@@ -9136,7 +9137,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0;
                                 cpu.regs.flags.carry = false;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                         // Half-Carry set:
@@ -9146,7 +9147,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0xFA;
                                 cpu.regs.flags.carry = false;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                     };
@@ -9161,7 +9162,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0xA0;
                                 cpu.regs.flags.carry = true;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                         // Half-Carry set:
@@ -9171,7 +9172,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
                                 to_add = 0x9A;
                                 cpu.regs.flags.carry = true;
                             } else {
-                                cpu.log_message("Warning: daa instruction failed.".to_owned());
+                                warn!("daa instruction failed.");
                             }
                         },
                     };
@@ -9213,13 +9214,13 @@ fn inst_ex_af_af_prime(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_jr_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 1);
     cpu.regs.pc = add_16bit_signed_8bit!(cpu.regs.pc + 2, offset);
 }
 
 fn inst_jr_z_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.zero {
-        let offset = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        let offset = memory.read_byte(cpu.regs.pc + 1);
         cpu.regs.pc = add_16bit_signed_8bit!(cpu.regs.pc + 2, offset);
         cpu.added_delay = 5;
     } else {
@@ -9229,7 +9230,7 @@ fn inst_jr_z_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 fn inst_jr_c_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.carry {
-        let offset = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        let offset = memory.read_byte(cpu.regs.pc + 1);
         cpu.regs.pc = add_16bit_signed_8bit!(cpu.regs.pc + 2, offset);
         cpu.added_delay = 5;
     } else {
@@ -9272,28 +9273,28 @@ fn inst_add_hl_sp(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_ld_a_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
 
     cpu.regs.a = val;
     cpu.regs.pc += 1;
 }
 fn inst_ld_a_mem_de(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.de;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
 
     cpu.regs.a = val;
     cpu.regs.pc += 1;
 }
 fn inst_ld_hl_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
-    let val = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 1);
+    let val = memory.read_word(addr);
 
     cpu.regs.hl = val;
     cpu.regs.pc += 3;
 }
 fn inst_ld_a_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 1);
+    let val = memory.read_byte(addr);
 
     cpu.regs.a = val;
     cpu.regs.pc += 3;
@@ -9395,22 +9396,22 @@ fn inst_dec_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_ld_c_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     set_low_of_16bit!(cpu.regs.bc, imm);
     cpu.regs.pc += 2;
 }
 fn inst_ld_e_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     set_low_of_16bit!(cpu.regs.de, imm);
     cpu.regs.pc += 2;
 }
 fn inst_ld_l_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     set_low_of_16bit!(cpu.regs.hl, imm);
     cpu.regs.pc += 2;
 }
 fn inst_ld_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     cpu.regs.a = imm;
     cpu.regs.pc += 2;
 }
@@ -9479,7 +9480,7 @@ fn inst_ld_h_b(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = get_high_of_16bit!(cpu.regs.bc);
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
@@ -9504,7 +9505,7 @@ fn inst_ld_h_c(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = get_low_of_16bit!(cpu.regs.bc);
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
@@ -9529,7 +9530,7 @@ fn inst_ld_h_d(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = get_high_of_16bit!(cpu.regs.de);
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
@@ -9554,7 +9555,7 @@ fn inst_ld_h_e(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = get_low_of_16bit!(cpu.regs.de);
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
@@ -9579,7 +9580,7 @@ fn inst_ld_h_h(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = get_high_of_16bit!(cpu.regs.hl);
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
@@ -9604,27 +9605,27 @@ fn inst_ld_h_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = get_low_of_16bit!(cpu.regs.hl);
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_b_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.bc, val);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_d_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.de, val);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_h_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.hl, val);
 
     cpu.regs.pc += 1;
@@ -9653,7 +9654,7 @@ fn inst_ld_h_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_ld_mem_hl_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
     let val = cpu.regs.a;
-    memory.write_byte(addr, val, cpu.cycle_timestamp);
+    memory.write_byte(addr, val);
 
     cpu.regs.pc += 1;
 }
@@ -9803,28 +9804,28 @@ fn inst_ld_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_ld_c_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.bc, val);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_e_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.de, val);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_l_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.hl, val);
 
     cpu.regs.pc += 1;
 }
 fn inst_ld_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let val = memory.read_byte(addr);
     cpu.regs.a = val;
 
     cpu.regs.pc += 1;
@@ -9966,7 +9967,7 @@ fn inst_sub_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_add_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_add = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(addr);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, false);
 
@@ -9976,7 +9977,7 @@ fn inst_add_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 fn inst_sub_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, false);
 
@@ -10112,7 +10113,7 @@ fn inst_sbc_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_adc_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_add = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(addr);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, cpu.regs.flags.carry);
 
@@ -10122,7 +10123,7 @@ fn inst_adc_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 fn inst_sbc_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, cpu.regs.flags.carry);
 
@@ -10205,7 +10206,7 @@ fn inst_and_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_and_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_and = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_and = memory.read_byte(addr);
 
     let result = and_8bit!(cpu.regs.flags, old_val, to_and);
 
@@ -10279,7 +10280,7 @@ fn inst_xor_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_xor_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_xor = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_xor = memory.read_byte(addr);
 
     let result = xor_8bit!(cpu.regs.flags, old_val, to_xor);
 
@@ -10353,7 +10354,7 @@ fn inst_or_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_or_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_or = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_or = memory.read_byte(addr);
 
     let result = or_8bit!(cpu.regs.flags, old_val, to_or);
 
@@ -10421,7 +10422,7 @@ fn inst_cp_a_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 fn inst_cp_a_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let val = cpu.regs.a;
     let addr = cpu.regs.hl;
-    let to_cmp = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_cmp = memory.read_byte(addr);
 
     let _ = sub_8bit!(cpu.regs.flags, val, to_cmp, false);
 
@@ -10439,7 +10440,7 @@ fn inst_cp_a_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 // Calls & Pushes (0xC0 to 0xFF):
 fn inst_ret_nz(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.zero {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10447,7 +10448,7 @@ fn inst_ret_nz(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_ret_nc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.carry {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10456,7 +10457,7 @@ fn inst_ret_nc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 fn inst_ret_po(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     // Note: the `po` up there means `parity odd`, not `parity overflow`.
     if !cpu.regs.flags.parity_overflow {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10464,47 +10465,47 @@ fn inst_ret_po(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_ret_p(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.sign {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
     }
 }
 fn inst_pop_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    let new_val = stack_pop_16bit!(cpu.regs, memory);
     cpu.regs.bc = new_val;
 
     cpu.regs.pc += 1;
 }
 fn inst_pop_de(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    let new_val = stack_pop_16bit!(cpu.regs, memory);
     cpu.regs.de = new_val;
 
     cpu.regs.pc += 1;
 }
 fn inst_pop_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    let new_val = stack_pop_16bit!(cpu.regs, memory);
     cpu.regs.hl = new_val;
 
     cpu.regs.pc += 1;
 }
 fn inst_pop_af(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.flags = unpack_flags!(stack_pop_8bit!(cpu.regs, memory, cpu.cycle_timestamp));
-    cpu.regs.a = stack_pop_8bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    cpu.regs.flags = unpack_flags!(stack_pop_8bit!(cpu.regs, memory));
+    cpu.regs.a = stack_pop_8bit!(cpu.regs, memory);
 
     cpu.regs.pc += 1;
 }
 
 fn inst_jp_nz_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.zero {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_jp_nc_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.carry {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
@@ -10512,36 +10513,36 @@ fn inst_jp_nc_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 fn inst_jp_po_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     // Note: the `po` up there means `parity odd`, not `parity overflow`.
     if !cpu.regs.flags.parity_overflow {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_jp_p_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.sign {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_jp_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
 }
 
 fn inst_out_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let accumulator = cpu.regs.a;
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     let addr = compose_16bit_from_8bit!(accumulator, imm);
 
-    memory.peripheral_write_byte(addr, accumulator, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, accumulator);
     cpu.regs.pc += 2;
 }
 
 fn inst_ex_mem_sp_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let old_mem_new_hl = memory.read_word(cpu.regs.sp, cpu.cycle_timestamp);
+    let old_mem_new_hl = memory.read_word(cpu.regs.sp);
     let old_hl_new_mem = cpu.regs.hl;
 
-    memory.write_word(cpu.regs.sp, old_hl_new_mem, cpu.cycle_timestamp);
+    memory.write_word(cpu.regs.sp, old_hl_new_mem);
     cpu.regs.hl = old_mem_new_hl;
 
     cpu.regs.pc += 1;
@@ -10556,8 +10557,8 @@ fn inst_di(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_call_nz_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.zero {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10565,8 +10566,8 @@ fn inst_call_nz_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_call_nc_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.carry {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10575,8 +10576,8 @@ fn inst_call_nc_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 fn inst_call_po_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     // Note: the `po` up there means `parity odd`, not `parity overflow`.
     if !cpu.regs.flags.parity_overflow {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10584,8 +10585,8 @@ fn inst_call_po_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_call_p_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if !cpu.regs.flags.sign {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10593,17 +10594,17 @@ fn inst_call_p_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_push_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.bc, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.bc);
 
     cpu.regs.pc += 1;
 }
 fn inst_push_de(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.de, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.de);
 
     cpu.regs.pc += 1;
 }
 fn inst_push_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.hl, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.hl);
 
     cpu.regs.pc += 1;
 }
@@ -10611,15 +10612,15 @@ fn inst_push_af(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let accumulator = cpu.regs.a;
     let flags_b = pack_flags!(cpu.regs.flags);
 
-    stack_push_8bit!(cpu.regs, memory, accumulator, cpu.cycle_timestamp);
-    stack_push_8bit!(cpu.regs, memory, flags_b, cpu.cycle_timestamp);
+    stack_push_8bit!(cpu.regs, memory, accumulator);
+    stack_push_8bit!(cpu.regs, memory, flags_b);
 
     cpu.regs.pc += 1;
 }
 
 fn inst_add_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_add = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(cpu.regs.pc + 1);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, false);
 
@@ -10628,7 +10629,7 @@ fn inst_add_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_sub_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(cpu.regs.pc + 1);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, false);
 
@@ -10637,7 +10638,7 @@ fn inst_sub_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_and_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_and = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_and = memory.read_byte(cpu.regs.pc + 1);
 
     let result = and_8bit!(cpu.regs.flags, old_val, to_and);
 
@@ -10646,7 +10647,7 @@ fn inst_and_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_or_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_or = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_or = memory.read_byte(cpu.regs.pc + 1);
 
     let result = or_8bit!(cpu.regs.flags, old_val, to_or);
 
@@ -10655,25 +10656,25 @@ fn inst_or_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_rst_00h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x00;
 }
 fn inst_rst_10h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x10;
 }
 fn inst_rst_20h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x20;
 }
 fn inst_rst_30h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x30;
 }
 
 fn inst_ret_z(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.zero {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10681,7 +10682,7 @@ fn inst_ret_z(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_ret_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.carry {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10689,7 +10690,7 @@ fn inst_ret_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_ret_pe(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.parity_overflow {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10697,7 +10698,7 @@ fn inst_ret_pe(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_ret_m(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.sign {
-        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+        cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
         cpu.added_delay = 6;
     } else {
         cpu.regs.pc += 1;
@@ -10705,7 +10706,7 @@ fn inst_ret_m(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_ret(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
 }
 fn inst_exx(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     let old_bc_new_bc_prime = cpu.regs.bc;
@@ -10736,28 +10737,28 @@ fn inst_ld_sp_hl(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_jp_z_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.zero {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_jp_c_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.carry {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_jp_pe_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.parity_overflow {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_jp_m_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.sign {
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
     } else {
         cpu.regs.pc += 3;
     }
@@ -10765,10 +10766,10 @@ fn inst_jp_m_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 fn inst_in_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let accumulator = cpu.regs.a;
-    let imm = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let imm = memory.read_byte(cpu.regs.pc + 1);
     let addr = compose_16bit_from_8bit!(accumulator, imm);
 
-    cpu.regs.a = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    cpu.regs.a = memory.peripheral_read_byte(addr);
     cpu.regs.pc += 2;
 }
 fn inst_ex_de_hl(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -10789,8 +10790,8 @@ fn inst_ei(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_call_z_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.zero {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10798,8 +10799,8 @@ fn inst_call_z_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_call_c_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.carry {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10807,8 +10808,8 @@ fn inst_call_c_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_call_pe_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.parity_overflow {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
@@ -10816,21 +10817,21 @@ fn inst_call_pe_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_call_m_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     if cpu.regs.flags.sign {
-        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+        stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+        cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
         cpu.added_delay = 7;
     } else {
         cpu.regs.pc += 3;
     }
 }
 fn inst_call_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3, cpu.cycle_timestamp);
-    cpu.regs.pc = memory.read_word(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 3);
+    cpu.regs.pc = memory.read_word(cpu.regs.pc + 1);
 }
 
 fn inst_adc_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_add = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(cpu.regs.pc + 1);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, cpu.regs.flags.carry);
 
@@ -10839,7 +10840,7 @@ fn inst_adc_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_sbc_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(cpu.regs.pc + 1);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, cpu.regs.flags.carry);
 
@@ -10848,7 +10849,7 @@ fn inst_sbc_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_xor_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_val = cpu.regs.a;
-    let to_xor = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_xor = memory.read_byte(cpu.regs.pc + 1);
 
     let result = xor_8bit!(cpu.regs.flags, old_val, to_xor);
 
@@ -10857,7 +10858,7 @@ fn inst_xor_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_cp_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let val = cpu.regs.a;
-    let to_cmp = memory.read_byte(cpu.regs.pc + 1, cpu.cycle_timestamp);
+    let to_cmp = memory.read_byte(cpu.regs.pc + 1);
 
     let _ = sub_8bit!(cpu.regs.flags, val, to_cmp, false);
 
@@ -10865,19 +10866,19 @@ fn inst_cp_a_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_rst_08h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x08;
 }
 fn inst_rst_18h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x18;
 }
 fn inst_rst_28h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x28;
 }
 fn inst_rst_38h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.pc + 1);
     cpu.regs.pc = 0x38;
 }
 
@@ -10886,7 +10887,7 @@ fn inst_rst_38h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 fn inst_in_b_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -10899,7 +10900,7 @@ fn inst_in_b_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_in_d_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -10912,7 +10913,7 @@ fn inst_in_d_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_in_h_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -10925,7 +10926,7 @@ fn inst_in_h_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_in_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -10940,28 +10941,28 @@ fn inst_out_mem_bc_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = get_high_of_16bit!(cpu.regs.bc);
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_out_mem_bc_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = get_high_of_16bit!(cpu.regs.de);
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_out_mem_bc_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = get_high_of_16bit!(cpu.regs.hl);
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_out_mem_bc_0(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = 0u8;
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 
@@ -11003,31 +11004,31 @@ fn inst_sbc_hl_sp(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_ld_mem_im16_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
     let new_val = cpu.regs.bc;
 
-    memory.write_word(addr, new_val, cpu.cycle_timestamp);
+    memory.write_word(addr, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_ld_mem_im16_de(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
     let new_val = cpu.regs.de;
 
-    memory.write_word(addr, new_val, cpu.cycle_timestamp);
+    memory.write_word(addr, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_ld_mem_im16_hl_2(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
     let new_val = cpu.regs.hl;
 
-    memory.write_word(addr, new_val, cpu.cycle_timestamp);
+    memory.write_word(addr, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_ld_mem_im16_sp(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
     let new_val = cpu.regs.sp;
 
-    memory.write_word(addr, new_val, cpu.cycle_timestamp);
+    memory.write_word(addr, new_val);
     cpu.regs.pc += 4;
 }
 
@@ -11056,7 +11057,7 @@ fn inst_neg(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_retn(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     cpu.iff1 = cpu.iff2;
-    cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
 }
 
 fn inst_im0(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -11087,7 +11088,7 @@ fn inst_ld_a_i(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_rrd(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_mem = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_mem = memory.read_byte(addr);
     let old_a = cpu.regs.a;
 
     let old_a_low = old_a & 0x0F;
@@ -11104,14 +11105,14 @@ fn inst_rrd(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     cpu.regs.flags.parity_overflow = even_parity_8bit!(new_a);
 
     cpu.regs.a = new_a;
-    memory.write_byte(addr, new_mem, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_mem);
 
     cpu.regs.pc += 2;
 }
 
 fn inst_in_c_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -11124,7 +11125,7 @@ fn inst_in_c_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_in_e_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -11137,7 +11138,7 @@ fn inst_in_e_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_in_l_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -11150,7 +11151,7 @@ fn inst_in_l_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 fn inst_in_a_mem_bc(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.bc;
-    let new_val = memory.peripheral_read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(addr);
 
     cpu.regs.flags.add_sub = false;
     cpu.regs.flags.half_carry = false;
@@ -11166,28 +11167,28 @@ fn inst_out_mem_bc_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = get_low_of_16bit!(cpu.regs.bc);
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_out_mem_bc_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = get_low_of_16bit!(cpu.regs.de);
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_out_mem_bc_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = get_low_of_16bit!(cpu.regs.hl);
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_out_mem_bc_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_val = cpu.regs.a;
     let addr = cpu.regs.bc;
 
-    memory.peripheral_write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.peripheral_write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 
@@ -11229,43 +11230,43 @@ fn inst_adc_hl_sp(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_ld_bc_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    let new_val = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    let new_val = memory.read_word(addr);
 
     cpu.regs.bc = new_val;
 
     cpu.regs.pc += 4;
 }
 fn inst_ld_de_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    let new_val = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    let new_val = memory.read_word(addr);
 
     cpu.regs.de = new_val;
 
     cpu.regs.pc += 4;
 }
 fn inst_ld_hl_mem_im16_2(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    let new_val = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    let new_val = memory.read_word(addr);
 
     cpu.regs.hl = new_val;
 
     cpu.regs.pc += 4;
 }
 fn inst_ld_sp_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    cpu.regs.sp = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    cpu.regs.sp = memory.read_word(addr);
 
     cpu.regs.pc += 4;
 }
 
 fn inst_reti(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    cpu.regs.pc = stack_pop_16bit!(cpu.regs, memory);
     memory.reti_notify();
 }
 
 fn inst_im_0_slash_1(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
-    cpu.log_message("Warning: Interrupt mode set to 0/1, this is undefined.".to_owned());
+    warn!("Interrupt mode set to 0/1, this is undefined.");
     cpu.im = cpu::InterruptMode::ModeUndefined;
     cpu.regs.pc += 2;
 }
@@ -11294,7 +11295,7 @@ fn inst_ld_a_r(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
 fn inst_rld(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_mem = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_mem = memory.read_byte(addr);
     let old_a = cpu.regs.a;
 
     let old_a_low = old_a & 0x0F;
@@ -11311,7 +11312,7 @@ fn inst_rld(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     cpu.regs.flags.parity_overflow = even_parity_8bit!(new_a);
 
     cpu.regs.a = new_a;
-    memory.write_byte(addr, new_mem, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_mem);
 
     cpu.regs.pc += 2;
 }
@@ -11321,8 +11322,8 @@ fn inst_ldi(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_de = cpu.regs.de;
     let old_hl = cpu.regs.hl;
 
-    let mem_old_hl = memory.read_byte(old_hl, cpu.cycle_timestamp);
-    memory.write_byte(old_de, mem_old_hl, cpu.cycle_timestamp);
+    let mem_old_hl = memory.read_byte(old_hl);
+    memory.write_byte(old_de, mem_old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_de = old_de.wrapping_add(1);
@@ -11343,8 +11344,8 @@ fn inst_ldir(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_de = cpu.regs.de;
     let old_hl = cpu.regs.hl;
 
-    let mem_old_hl = memory.read_byte(old_hl, cpu.cycle_timestamp);
-    memory.write_byte(old_de, mem_old_hl, cpu.cycle_timestamp);
+    let mem_old_hl = memory.read_byte(old_hl);
+    memory.write_byte(old_de, mem_old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_de = old_de.wrapping_add(1);
@@ -11369,7 +11370,7 @@ fn inst_cpi(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_bc = cpu.regs.bc;
     let old_hl = cpu.regs.hl;
     let comparee = cpu.regs.a;
-    let to_cmp = memory.read_byte(old_hl, cpu.cycle_timestamp);
+    let to_cmp = memory.read_byte(old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_hl = old_hl.wrapping_add(1);
@@ -11397,7 +11398,7 @@ fn inst_cpir(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_bc = cpu.regs.bc;
     let old_hl = cpu.regs.hl;
     let comparee = cpu.regs.a;
-    let to_cmp = memory.read_byte(old_hl, cpu.cycle_timestamp);
+    let to_cmp = memory.read_byte(old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_hl = old_hl.wrapping_add(1);
@@ -11431,8 +11432,8 @@ fn inst_ldd(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_de = cpu.regs.de;
     let old_hl = cpu.regs.hl;
 
-    let mem_old_hl = memory.read_byte(old_hl, cpu.cycle_timestamp);
-    memory.write_byte(old_de, mem_old_hl, cpu.cycle_timestamp);
+    let mem_old_hl = memory.read_byte(old_hl);
+    memory.write_byte(old_de, mem_old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_de = old_de.wrapping_sub(1);
@@ -11453,8 +11454,8 @@ fn inst_lddr(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_de = cpu.regs.de;
     let old_hl = cpu.regs.hl;
 
-    let mem_old_hl = memory.read_byte(old_hl, cpu.cycle_timestamp);
-    memory.write_byte(old_de, mem_old_hl, cpu.cycle_timestamp);
+    let mem_old_hl = memory.read_byte(old_hl);
+    memory.write_byte(old_de, mem_old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_de = old_de.wrapping_sub(1);
@@ -11479,7 +11480,7 @@ fn inst_cpd(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_bc = cpu.regs.bc;
     let old_hl = cpu.regs.hl;
     let comparee = cpu.regs.a;
-    let to_cmp = memory.read_byte(old_hl, cpu.cycle_timestamp);
+    let to_cmp = memory.read_byte(old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_hl = old_hl.wrapping_sub(1);
@@ -11507,7 +11508,7 @@ fn inst_cpdr(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let old_bc = cpu.regs.bc;
     let old_hl = cpu.regs.hl;
     let comparee = cpu.regs.a;
-    let to_cmp = memory.read_byte(old_hl, cpu.cycle_timestamp);
+    let to_cmp = memory.read_byte(old_hl);
 
     let new_bc = old_bc.wrapping_sub(1);
     let new_hl = old_hl.wrapping_sub(1);
@@ -11544,8 +11545,8 @@ fn inst_ini(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_byte_counter = byte_counter.wrapping_sub(1);
     let new_mem_addr = mem_addr.wrapping_add(1);
 
-    let new_val = memory.peripheral_read_byte(io_addr, cpu.cycle_timestamp);
-    memory.write_byte(mem_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(io_addr);
+    memory.write_byte(mem_addr, new_val);
 
     set_high_of_16bit!(cpu.regs.bc, new_byte_counter);
     cpu.regs.hl = new_mem_addr;
@@ -11563,8 +11564,8 @@ fn inst_inir(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_byte_counter = byte_counter.wrapping_sub(1);
     let new_mem_addr = mem_addr.wrapping_add(1);
 
-    let new_val = memory.peripheral_read_byte(io_addr, cpu.cycle_timestamp);
-    memory.write_byte(mem_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(io_addr);
+    memory.write_byte(mem_addr, new_val);
 
     set_high_of_16bit!(cpu.regs.bc, new_byte_counter);
     cpu.regs.hl = new_mem_addr;
@@ -11587,8 +11588,8 @@ fn inst_outi(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let io_addr = cpu.regs.bc;
     let mem_addr = cpu.regs.hl;
 
-    let new_val = memory.read_byte(mem_addr, cpu.cycle_timestamp);
-    memory.peripheral_write_byte(io_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(mem_addr);
+    memory.peripheral_write_byte(io_addr, new_val);
 
     let new_mem_addr = mem_addr.wrapping_add(1);
     cpu.regs.hl = new_mem_addr;
@@ -11606,8 +11607,8 @@ fn inst_outir(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let io_addr = cpu.regs.bc;
     let mem_addr = cpu.regs.hl;
 
-    let new_val = memory.read_byte(mem_addr, cpu.cycle_timestamp);
-    memory.peripheral_write_byte(io_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(mem_addr);
+    memory.peripheral_write_byte(io_addr, new_val);
 
     let new_mem_addr = mem_addr.wrapping_add(1);
     cpu.regs.hl = new_mem_addr;
@@ -11629,8 +11630,8 @@ fn inst_ind(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_byte_counter = byte_counter.wrapping_sub(1);
     let new_mem_addr = mem_addr.wrapping_sub(1);
 
-    let new_val = memory.peripheral_read_byte(io_addr, cpu.cycle_timestamp);
-    memory.write_byte(mem_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(io_addr);
+    memory.write_byte(mem_addr, new_val);
 
     set_high_of_16bit!(cpu.regs.bc, new_byte_counter);
     cpu.regs.hl = new_mem_addr;
@@ -11648,8 +11649,8 @@ fn inst_indr(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let new_byte_counter = byte_counter.wrapping_sub(1);
     let new_mem_addr = mem_addr.wrapping_sub(1);
 
-    let new_val = memory.peripheral_read_byte(io_addr, cpu.cycle_timestamp);
-    memory.write_byte(mem_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.peripheral_read_byte(io_addr);
+    memory.write_byte(mem_addr, new_val);
 
     set_high_of_16bit!(cpu.regs.bc, new_byte_counter);
     cpu.regs.hl = new_mem_addr;
@@ -11672,8 +11673,8 @@ fn inst_outd(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let io_addr = cpu.regs.bc;
     let mem_addr = cpu.regs.hl;
 
-    let new_val = memory.read_byte(mem_addr, cpu.cycle_timestamp);
-    memory.peripheral_write_byte(io_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(mem_addr);
+    memory.peripheral_write_byte(io_addr, new_val);
 
     let new_mem_addr = mem_addr.wrapping_sub(1);
     cpu.regs.hl = new_mem_addr;
@@ -11691,8 +11692,8 @@ fn inst_outdr(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let io_addr = cpu.regs.bc;
     let mem_addr = cpu.regs.hl;
 
-    let new_val = memory.read_byte(mem_addr, cpu.cycle_timestamp);
-    memory.peripheral_write_byte(io_addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(mem_addr);
+    memory.peripheral_write_byte(io_addr, new_val);
 
     let new_mem_addr = mem_addr.wrapping_sub(1);
     cpu.regs.hl = new_mem_addr;
@@ -11758,9 +11759,9 @@ fn inst_rlc_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_rlc_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -11823,9 +11824,9 @@ fn inst_rrc_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_rrc_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -11889,9 +11890,9 @@ fn inst_rl_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_rl_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -11954,9 +11955,9 @@ fn inst_rr_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_rr_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -12020,9 +12021,9 @@ fn inst_sla_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_sla_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -12086,9 +12087,9 @@ fn inst_sra_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_sra_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -12152,9 +12153,9 @@ fn inst_sll_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_sll_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -12218,9 +12219,9 @@ fn inst_srl_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_srl_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 2;
@@ -12272,7 +12273,7 @@ fn inst_bit_0_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_0_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 0, value);
     cpu.regs.pc += 2;
@@ -12322,7 +12323,7 @@ fn inst_bit_1_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_1_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 1, value);
     cpu.regs.pc += 2;
@@ -12372,7 +12373,7 @@ fn inst_bit_2_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_2_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 2, value);
     cpu.regs.pc += 2;
@@ -12422,7 +12423,7 @@ fn inst_bit_3_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_3_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 3, value);
     cpu.regs.pc += 2;
@@ -12472,7 +12473,7 @@ fn inst_bit_4_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_4_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 4, value);
     cpu.regs.pc += 2;
@@ -12522,7 +12523,7 @@ fn inst_bit_5_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_5_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 5, value);
     cpu.regs.pc += 2;
@@ -12572,7 +12573,7 @@ fn inst_bit_6_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_6_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 6, value);
     cpu.regs.pc += 2;
@@ -12622,7 +12623,7 @@ fn inst_bit_7_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_bit_7_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 7, value);
     cpu.regs.pc += 2;
@@ -12678,10 +12679,10 @@ fn inst_res_0_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_0_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_0_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -12736,10 +12737,10 @@ fn inst_res_1_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_1_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_1_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -12794,10 +12795,10 @@ fn inst_res_2_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_2_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_2_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -12852,10 +12853,10 @@ fn inst_res_3_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_3_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_3_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -12910,10 +12911,10 @@ fn inst_res_4_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_4_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_4_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -12968,10 +12969,10 @@ fn inst_res_5_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_5_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_5_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13026,10 +13027,10 @@ fn inst_res_6_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_6_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_6_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13084,10 +13085,10 @@ fn inst_res_7_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_res_7_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_res_7_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13142,10 +13143,10 @@ fn inst_set_0_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_0_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_0_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13200,10 +13201,10 @@ fn inst_set_1_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_1_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_1_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13258,10 +13259,10 @@ fn inst_set_2_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_2_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_2_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13316,10 +13317,10 @@ fn inst_set_3_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_3_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_3_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13374,10 +13375,10 @@ fn inst_set_4_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_4_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_4_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13432,10 +13433,10 @@ fn inst_set_5_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_5_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_5_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13490,10 +13491,10 @@ fn inst_set_6_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_6_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_6_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13548,10 +13549,10 @@ fn inst_set_7_l(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 fn inst_set_7_mem_hl(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     let addr = cpu.regs.hl;
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
 
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.pc += 2;
 }
 fn inst_set_7_a(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
@@ -13596,12 +13597,12 @@ fn inst_add_ix_sp(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 2;
 }
 fn inst_ld_ix_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.ix = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    cpu.regs.ix = memory.read_word(cpu.regs.pc + 2);
     cpu.regs.pc += 4;
 }
 fn inst_ld_mem_im16_ix(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    memory.write_word(addr, cpu.regs.ix, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    memory.write_word(addr, cpu.regs.ix);
 
     cpu.regs.pc += 4;
 }
@@ -13626,14 +13627,14 @@ fn inst_dec_ixh(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 2;
 }
 fn inst_ld_ixh_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(cpu.regs.pc + 2);
     set_high_of_16bit!(cpu.regs.ix, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_ix_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    cpu.regs.ix = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    cpu.regs.ix = memory.read_word(addr);
 
     cpu.regs.pc += 4;
 }
@@ -13658,7 +13659,7 @@ fn inst_dec_ixl(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 2;
 }
 fn inst_ld_ixl_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(cpu.regs.pc + 2);
     set_low_of_16bit!(cpu.regs.ix, new_val);
 
     cpu.regs.pc += 3;
@@ -13953,19 +13954,19 @@ fn inst_cp_a_ixl(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_pop_ix(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.ix = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    cpu.regs.ix = stack_pop_16bit!(cpu.regs, memory);
     cpu.regs.pc += 2;
 }
 fn inst_push_ix(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.ix, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.ix);
     cpu.regs.pc += 2;
 }
 fn inst_ex_mem_sp_ix(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let old_mem_sp_new_ix = memory.read_word(cpu.regs.sp, cpu.cycle_timestamp);
+    let old_mem_sp_new_ix = memory.read_word(cpu.regs.sp);
     let old_ix_new_mem_sp = cpu.regs.ix;
 
     cpu.regs.ix = old_mem_sp_new_ix;
-    memory.write_word(cpu.regs.sp, old_ix_new_mem_sp, cpu.cycle_timestamp);
+    memory.write_word(cpu.regs.sp, old_ix_new_mem_sp);
 
     cpu.regs.pc += 2;
 }
@@ -13978,167 +13979,167 @@ fn inst_ld_sp_ix(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_inc_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let result = inc_8bit!(cpu.regs.flags, old_val);
 
-    memory.write_byte(addr, result, cpu.cycle_timestamp);
+    memory.write_byte(addr, result);
     cpu.regs.pc += 3;
 }
 fn inst_dec_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let result = dec_8bit!(cpu.regs.flags, old_val);
 
-    memory.write_byte(addr, result, cpu.cycle_timestamp);
+    memory.write_byte(addr, result);
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(cpu.regs.pc + 3, cpu.cycle_timestamp);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(cpu.regs.pc + 3);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_ld_b_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_c_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_d_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_e_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_h_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_l_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 3;
 }
 
 fn inst_ld_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = get_high_of_16bit!(cpu.regs.bc);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = get_low_of_16bit!(cpu.regs.bc);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = get_high_of_16bit!(cpu.regs.de);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = get_low_of_16bit!(cpu.regs.de);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = get_high_of_16bit!(cpu.regs.hl);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = get_low_of_16bit!(cpu.regs.hl);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let new_val = cpu.regs.a;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_add_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_add = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(addr);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, false);
 
@@ -14146,11 +14147,11 @@ fn inst_add_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_adc_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_add = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(addr);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, cpu.regs.flags.carry);
 
@@ -14158,11 +14159,11 @@ fn inst_adc_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_sub_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, false);
 
@@ -14170,11 +14171,11 @@ fn inst_sub_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_sbc_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, cpu.regs.flags.carry);
 
@@ -14182,11 +14183,11 @@ fn inst_sbc_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_and_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_and = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_and = memory.read_byte(addr);
 
     let result = and_8bit!(cpu.regs.flags, old_val, to_and);
 
@@ -14194,11 +14195,11 @@ fn inst_and_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_or_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_or = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_or = memory.read_byte(addr);
 
     let result = or_8bit!(cpu.regs.flags, old_val, to_or);
 
@@ -14206,11 +14207,11 @@ fn inst_or_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 3;
 }
 fn inst_xor_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_xor = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_xor = memory.read_byte(addr);
 
     let result = or_8bit!(cpu.regs.flags, old_val, to_xor);
 
@@ -14218,11 +14219,11 @@ fn inst_xor_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_cp_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let _ = sub_8bit!(cpu.regs.flags, old_val, to_sub, false);
     cpu.regs.pc += 3;
@@ -14230,95 +14231,95 @@ fn inst_cp_a_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 // IX bit instructions (DDCB-Prefixed):
 fn inst_rlc_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -14326,95 +14327,95 @@ fn inst_rlc_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_rrc_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -14422,103 +14423,103 @@ fn inst_rrc_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_rl_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -14526,103 +14527,103 @@ fn inst_rl_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_rr_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -14630,95 +14631,95 @@ fn inst_rr_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_sla_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -14726,95 +14727,95 @@ fn inst_sla_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_sra_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -14822,95 +14823,95 @@ fn inst_sra_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_sll_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -14918,95 +14919,95 @@ fn inst_sll_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_srl_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -15014,1481 +15015,1481 @@ fn inst_srl_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_bit_0_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 0, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_1_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 1, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_2_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 2, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_3_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 3, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_4_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 4, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_5_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 5, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_6_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 6, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_7_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 7, value);
     cpu.regs.pc += 4;
 }
 
 fn inst_res_0_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_1_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_2_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_3_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_4_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_5_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_6_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_7_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_0_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_1_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_2_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_3_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_4_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_5_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_6_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_7_mem_ix_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_ix_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.ix, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
@@ -16528,12 +16529,12 @@ fn inst_add_iy_sp(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 2;
 }
 fn inst_ld_iy_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.iy = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    cpu.regs.iy = memory.read_word(cpu.regs.pc + 2);
     cpu.regs.pc += 4;
 }
 fn inst_ld_mem_im16_iy(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    memory.write_word(addr, cpu.regs.iy, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    memory.write_word(addr, cpu.regs.iy);
 
     cpu.regs.pc += 4;
 }
@@ -16558,14 +16559,14 @@ fn inst_dec_iyh(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 2;
 }
 fn inst_ld_iyh_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(cpu.regs.pc + 2);
     set_high_of_16bit!(cpu.regs.iy, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_iy_mem_im16(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let addr = memory.read_word(cpu.regs.pc + 2, cpu.cycle_timestamp);
-    cpu.regs.iy = memory.read_word(addr, cpu.cycle_timestamp);
+    let addr = memory.read_word(cpu.regs.pc + 2);
+    cpu.regs.iy = memory.read_word(addr);
 
     cpu.regs.pc += 4;
 }
@@ -16590,7 +16591,7 @@ fn inst_dec_iyl(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 2;
 }
 fn inst_ld_iyl_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let new_val = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(cpu.regs.pc + 2);
     set_low_of_16bit!(cpu.regs.iy, new_val);
 
     cpu.regs.pc += 3;
@@ -16885,19 +16886,19 @@ fn inst_cp_a_iyl(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_pop_iy(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    cpu.regs.iy = stack_pop_16bit!(cpu.regs, memory, cpu.cycle_timestamp);
+    cpu.regs.iy = stack_pop_16bit!(cpu.regs, memory);
     cpu.regs.pc += 2;
 }
 fn inst_push_iy(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    stack_push_16bit!(cpu.regs, memory, cpu.regs.iy, cpu.cycle_timestamp);
+    stack_push_16bit!(cpu.regs, memory, cpu.regs.iy);
     cpu.regs.pc += 2;
 }
 fn inst_ex_mem_sp_iy(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let old_mem_sp_new_iy = memory.read_word(cpu.regs.sp, cpu.cycle_timestamp);
+    let old_mem_sp_new_iy = memory.read_word(cpu.regs.sp);
     let old_iy_new_mem_sp = cpu.regs.iy;
 
     cpu.regs.iy = old_mem_sp_new_iy;
-    memory.write_word(cpu.regs.sp, old_iy_new_mem_sp, cpu.cycle_timestamp);
+    memory.write_word(cpu.regs.sp, old_iy_new_mem_sp);
 
     cpu.regs.pc += 2;
 }
@@ -16910,167 +16911,167 @@ fn inst_ld_sp_iy(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 }
 
 fn inst_inc_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let result = inc_8bit!(cpu.regs.flags, old_val);
 
-    memory.write_byte(addr, result, cpu.cycle_timestamp);
+    memory.write_byte(addr, result);
     cpu.regs.pc += 3;
 }
 fn inst_dec_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let result = dec_8bit!(cpu.regs.flags, old_val);
 
-    memory.write_byte(addr, result, cpu.cycle_timestamp);
+    memory.write_byte(addr, result);
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(cpu.regs.pc + 3, cpu.cycle_timestamp);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(cpu.regs.pc + 3);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_ld_b_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_c_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_d_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_e_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_h_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_l_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let new_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let new_val = memory.read_byte(addr);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 3;
 }
 
 fn inst_ld_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = get_high_of_16bit!(cpu.regs.bc);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = get_low_of_16bit!(cpu.regs.bc);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = get_high_of_16bit!(cpu.regs.de);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = get_low_of_16bit!(cpu.regs.de);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = get_high_of_16bit!(cpu.regs.hl);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = get_low_of_16bit!(cpu.regs.hl);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_ld_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let new_val = cpu.regs.a;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 3;
 }
 fn inst_add_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_add = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(addr);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, false);
 
@@ -17078,11 +17079,11 @@ fn inst_add_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_adc_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_add = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_add = memory.read_byte(addr);
 
     let result = add_8bit!(cpu.regs.flags, old_val, to_add, cpu.regs.flags.carry);
 
@@ -17090,11 +17091,11 @@ fn inst_adc_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_sub_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, false);
 
@@ -17102,11 +17103,11 @@ fn inst_sub_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_sbc_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let result = sub_8bit!(cpu.regs.flags, old_val, to_sub, cpu.regs.flags.carry);
 
@@ -17114,11 +17115,11 @@ fn inst_sbc_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_and_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_and = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_and = memory.read_byte(addr);
 
     let result = and_8bit!(cpu.regs.flags, old_val, to_and);
 
@@ -17126,11 +17127,11 @@ fn inst_and_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_or_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_or = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_or = memory.read_byte(addr);
 
     let result = or_8bit!(cpu.regs.flags, old_val, to_or);
 
@@ -17138,11 +17139,11 @@ fn inst_or_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
     cpu.regs.pc += 3;
 }
 fn inst_xor_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_xor = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_xor = memory.read_byte(addr);
 
     let result = or_8bit!(cpu.regs.flags, old_val, to_xor);
 
@@ -17150,11 +17151,11 @@ fn inst_xor_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
     cpu.regs.pc += 3;
 }
 fn inst_cp_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
     let old_val = cpu.regs.a;
-    let to_sub = memory.read_byte(addr, cpu.cycle_timestamp);
+    let to_sub = memory.read_byte(addr);
 
     let _ = sub_8bit!(cpu.regs.flags, old_val, to_sub, false);
     cpu.regs.pc += 3;
@@ -17162,95 +17163,95 @@ fn inst_cp_a_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 
 // IY bit instructions (FDCB-Prefixed):
 fn inst_rlc_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rlc_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | if (old_val & 0b1000_0000) != 0 { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -17258,95 +17259,95 @@ fn inst_rlc_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_rrc_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rrc_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | if (old_val & 0b0000_0001) != 0 { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -17354,103 +17355,103 @@ fn inst_rrc_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_rl_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rl_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val << 1) | if cpu.regs.flags.carry { 0b0000_0001 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -17458,103 +17459,103 @@ fn inst_rl_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_rr_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_rr_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
 
     let new_val = (old_val >> 1) | if cpu.regs.flags.carry { 0b1000_0000 } else { 0 };
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -17562,95 +17563,95 @@ fn inst_rr_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
 }
 
 fn inst_sla_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sla_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val << 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -17658,95 +17659,95 @@ fn inst_sla_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_sra_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sra_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val >> 1) | (old_val & 0b1000_0000);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -17754,95 +17755,95 @@ fn inst_sra_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_sll_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_sll_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = (old_val << 1) | 0b0000_0001;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_left_flags!(cpu.regs.flags, old_val, new_val);
@@ -17850,95 +17851,95 @@ fn inst_sll_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_srl_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
     cpu.regs.pc += 4;
 }
 fn inst_srl_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val >> 1;
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     apply_shift_right_flags!(cpu.regs.flags, old_val, new_val);
@@ -17946,1481 +17947,1481 @@ fn inst_srl_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) 
 }
 
 fn inst_bit_0_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 0, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_1_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 1, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_2_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 2, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_3_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 3, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_4_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 4, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_5_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 5, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_6_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 6, value);
     cpu.regs.pc += 4;
 }
 fn inst_bit_7_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let value = memory.read_byte(addr, cpu.cycle_timestamp);
+    let value = memory.read_byte(addr);
 
     apply_inst_bit_flags!(cpu.regs.flags, 7, value);
     cpu.regs.pc += 4;
 }
 
 fn inst_res_0_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_0_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_1_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_1_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_2_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_2_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_3_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_3_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_4_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_4_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_5_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_5_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_6_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_6_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_res_7_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_res_7_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val & !(1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_0_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_0_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 0);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_1_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_1_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 1);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_2_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_2_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 2);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_3_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_3_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 3);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_4_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_4_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 4);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_5_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_5_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 5);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_6_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_6_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 6);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;
 }
 
 fn inst_set_7_mem_iy_im8_b(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8_c(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.bc, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8_d(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8_e(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.de, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8_h(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_high_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8_l(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     set_low_of_16bit!(cpu.regs.hl, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
 
     cpu.regs.pc += 4;
 }
 fn inst_set_7_mem_iy_im8_a(cpu: &mut cpu::CPU, memory: &mut memory::MemorySystem) {
-    let offset = memory.read_byte(cpu.regs.pc + 2, cpu.cycle_timestamp);
+    let offset = memory.read_byte(cpu.regs.pc + 2);
     let addr = add_16bit_signed_8bit!(cpu.regs.iy, offset);
 
-    let old_val = memory.read_byte(addr, cpu.cycle_timestamp);
+    let old_val = memory.read_byte(addr);
     let new_val = old_val | (1 << 7);
-    memory.write_byte(addr, new_val, cpu.cycle_timestamp);
+    memory.write_byte(addr, new_val);
     cpu.regs.a = new_val;
 
     cpu.regs.pc += 4;

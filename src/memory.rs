@@ -13,17 +13,15 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
+use log::{info, warn, error};
+
 use std::io::prelude::*;
 use std::fs;
 use std::path;
 
-use crate::proj_config;
 use crate::keyboard;
 use crate::video;
 use crate::cassette;
-
-use crate::util;
-use crate::util::MessageLogging;
 
 
 // Memory layout:
@@ -43,39 +41,42 @@ use keyboard::KBD_MEM_SIZE as KBD_SIZE;
 pub const VID_BASE: u16 = 0x3C00;
 use video::VID_MEM_SIZE as VID_SIZE;
 
+// Combined cassette and "mode select" IO port:
+pub const CAS_MODESEL_BASE: u16 = 0xff;
+
 // A memory device is one that implements the read and write operations.
 pub trait MemIO {
-    fn read_byte(&mut self, addr: u16, cycle_timestamp: u32) -> u8;
-    fn write_byte(&mut self, addr: u16, val: u8, cycle_timestamp: u32);
+    fn read_byte(&mut self, addr: u16) -> u8;
+    fn write_byte(&mut self, addr: u16, val: u8);
 
-    fn read_word(&mut self, addr: u16, cycle_timestamp: u32) -> u16 {
-        let lsb = self.read_byte(addr, cycle_timestamp);
-        let msb = self.read_byte(addr + 1, cycle_timestamp);
+    fn read_word(&mut self, addr: u16) -> u16 {
+        let lsb = self.read_byte(addr);
+        let msb = self.read_byte(addr + 1);
 
         ((msb as u16) << 8) | (lsb as u16)
     }
 
-    fn write_word(&mut self, addr: u16, val: u16, cycle_timestamp: u32) {
-        self.write_byte(addr, (val & 0xff) as u8, cycle_timestamp);
-        self.write_byte(addr + 1, ((val >> 8) & 0xff) as u8, cycle_timestamp);
+    fn write_word(&mut self, addr: u16, val: u16) {
+        self.write_byte(addr, (val & 0xff) as u8);
+        self.write_byte(addr + 1, ((val >> 8) & 0xff) as u8);
     }
 }
 
 // A peripheral device is very similar, except it's accessed differently.
 pub trait PeripheralIO {
-    fn peripheral_read_byte(&mut self, addr: u16, cycle_timestamp: u32) -> u8;
-    fn peripheral_write_byte(&mut self, addr: u16, val: u8, cycle_timestamp: u32);
+    fn peripheral_read_byte(&mut self, addr: u16) -> u8;
+    fn peripheral_write_byte(&mut self, addr: u16, val: u8);
 
-    fn peripheral_read_word(&mut self, addr: u16, cycle_timestamp: u32) -> u16 {
-        let lsb = self.peripheral_read_byte(addr, cycle_timestamp);
-        let msb = self.peripheral_read_byte(addr + 1, cycle_timestamp);
+    fn peripheral_read_word(&mut self, addr: u16) -> u16 {
+        let lsb = self.peripheral_read_byte(addr);
+        let msb = self.peripheral_read_byte(addr + 1);
 
         ((msb as u16) << 8) | (lsb as u16)
     }
 
-    fn peripheral_write_word(&mut self, addr: u16, val: u16, cycle_timestamp: u32) {
-        self.peripheral_write_byte(addr, (val & 0xff) as u8, cycle_timestamp);
-        self.peripheral_write_byte(addr + 1, ((val >> 8) & 0xff) as u8, cycle_timestamp);
+    fn peripheral_write_word(&mut self, addr: u16, val: u16) {
+        self.peripheral_write_byte(addr, (val & 0xff) as u8);
+        self.peripheral_write_byte(addr + 1, ((val >> 8) & 0xff) as u8);
     }
 }
 
@@ -96,30 +97,23 @@ pub trait MemoryChipOps {
 pub struct RamChip {
     id:    String,
     data:  Box<[u8]>,
-
-    logged_messages:  Vec<String>,
-    messages_present: bool,
 }
 
 impl RamChip {
     // Create a new ram chip.
     pub fn new(id: String, size: u16, start_addr: u16) -> RamChip {
 
-        let mut chip = RamChip {
-                           id:   id,
-                           data: vec![0; size as usize].into_boxed_slice(),
+        let chip = RamChip {
+            id:   id,
+            data: vec![0; size as usize].into_boxed_slice(),
+        };
 
-                           logged_messages:  Vec::new(),
-                           messages_present: false,
-                       };
+        if (size % 1024) == 0 {
+            info!("Created ram chip `{}', starting address: 0x{:04X}, size: {}K.", chip.id, start_addr, size / 1024)
+        } else {
+            info!("Created ram chip `{}', starting address: 0x{:04X}, size: {} bytes.", chip.id, start_addr, size)
+        };
 
-        let create_report = if (size % 1024) == 0 {
-                                format!("Created ram chip `{}', starting address: 0x{:04X}, size: {}K.", chip.id, start_addr, size / 1024)
-                            } else {
-                                format!("Created ram chip `{}', starting address: 0x{:04X}, size: {} bytes.", chip.id, start_addr, size)
-                            };
-
-        chip.log_message(create_report);
         chip
     }
     pub fn change_size(&mut self, new_size: u16) {
@@ -130,18 +124,18 @@ impl RamChip {
 }
 
 impl MemIO for RamChip {
-    fn read_byte(&mut self, addr: u16, _cycle_timestamp: u32) -> u8 {
+    fn read_byte(&mut self, addr: u16) -> u8 {
         if (addr as usize) < self.data.len() {
             self.data[addr as usize]
         } else {
-            panic!("Failed read: Address 0x{:04X} is invalid for RAM chip `{}'", addr, self.id);
+            panic!("Failed read: Address offset 0x{:04X} is invalid for RAM chip `{}'", addr, self.id);
         }
     }
-    fn write_byte(&mut self, addr: u16, val: u8, _cycle_timestamp: u32) {
+    fn write_byte(&mut self, addr: u16, val: u8) {
         if (addr as usize) < self.data.len() {
             self.data[addr as usize] = val;
         } else {
-            panic!("Failed write: Address 0x{:04X} is invalid for RAM chip `{}'", addr, self.id);
+            panic!("Failed write: Address offset 0x{:04X} is invalid for RAM chip `{}'", addr, self.id);
         }
     }
 }
@@ -150,80 +144,41 @@ impl MemIO for RamChip {
 pub struct RomChip {
     id:    String,
     data:  Box<[u8]>,
-
-    logged_messages:  Vec<String>,
-    messages_present: bool,
 }
 
 impl RomChip {
     // Create a new rom chip.
     pub fn new(id: String, size: u16, start_addr: u16) -> RomChip {
-        let mut chip = RomChip {
-                           id:   id,
-                           data: vec![0xFF; size as usize].into_boxed_slice(),
+        let chip = RomChip {
+            id:   id,
+            data: vec![0xFF; size as usize].into_boxed_slice(),
+        };
 
-                           logged_messages:  Vec::new(),
-                           messages_present: false,
-                       };
+        if (size % 1024) == 0 {
+            info!("Created rom chip `{}', starting address: 0x{:04X}, size: {}K.", chip.id, start_addr, size / 1024)
+        } else {
+            info!("Created rom chip `{}', starting address: 0x{:04X}, size: {} bytes.", chip.id, start_addr, size)
+        };
 
-        let create_report = if (size % 1024) == 0 {
-                                format!("Created rom chip `{}', starting address: 0x{:04X}, size: {}K.", chip.id, start_addr, size / 1024)
-                            } else {
-                                format!("Created rom chip `{}', starting address: 0x{:04X}, size: {} bytes.", chip.id, start_addr, size)
-                            };
-
-        chip.log_message(create_report);
         chip
     }
 }
 
 impl MemIO for RomChip {
-    fn read_byte(&mut self, addr: u16, _cycle_timestamp: u32) -> u8 {
+    fn read_byte(&mut self, addr: u16) -> u8 {
         if (addr as usize) < self.data.len() {
             self.data[addr as usize]
         } else {
-            panic!("Failed read: Address 0x{:04X} is invalid for ROM chip `{}'", addr, self.id);
+            panic!("Failed read: Address offset 0x{:04X} is invalid for ROM chip `{}'", addr, self.id);
         }
     }
-    fn write_byte(&mut self, addr: u16, _val: u8, _cycle_timestamp: u32) {
+    fn write_byte(&mut self, addr: u16, _val: u8) {
         if (addr as usize) < self.data.len() {
             let id = self.id.clone();
-            self.log_message(format!("Warning: Failed write: Invalid operation for ROM chip `{}'.", id));
+            warn!("Failed write: Invalid operation for ROM chip `{}'.", id);
         } else {
-            panic!("Failed write: Address 0x{:04X} is invalid for ROM chip `{}'", addr, self.id);
+            panic!("Failed write: Address offset 0x{:04X} is invalid for ROM chip `{}'", addr, self.id);
         }
-    }
-}
-
-impl MessageLogging for RamChip {
-    fn log_message(&mut self, message: String) {
-        self.logged_messages.push(message);
-        self.messages_present = true;
-    }
-    fn messages_available(&self) -> bool {
-        self.messages_present
-    }
-    fn collect_messages(&mut self) -> Vec<String> {
-        let logged_thus_far = self.logged_messages.drain(..).collect();
-        self.messages_present = false;
-
-        logged_thus_far
-    }
-}
-
-impl MessageLogging for RomChip {
-    fn log_message(&mut self, message: String) {
-        self.logged_messages.push(message);
-        self.messages_present = true;
-    }
-    fn messages_available(&self) -> bool {
-        self.messages_present
-    }
-    fn collect_messages(&mut self) -> Vec<String> {
-        let logged_thus_far = self.logged_messages.drain(..).collect();
-        self.messages_present = false;
-
-        logged_thus_far
     }
 }
 
@@ -259,7 +214,7 @@ impl MemoryChip for RomChip {
     }
 }
 
-impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
+impl<T: MemoryChip> MemoryChipOps for T {
 
     // Erase the contents of a memory chip:
     fn wipe(&mut self) {
@@ -275,7 +230,7 @@ impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
         }
 
         let id = self.chip_id().to_owned();
-        self.log_message(format!("The memory chip `{}' was wiped.", id));
+        info!("The memory chip `{}' was wiped.", id);
     }
 
     // Load a file into a memory chip:
@@ -284,7 +239,7 @@ impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
         let path = path_in.as_ref() as &path::Path;
 
         if (offset as usize) >= self.chip_data_mut().len() {
-            self.log_message(format!("Failed to load the file `{}' into `{}', offset 0x{:04X}: Offset out of range.", path.display(), id, offset));
+            error!("Failed to load the file `{}' into `{}', offset 0x{:04X}: Offset out of range.", path.display(), id, offset);
 
             return false;
         }
@@ -306,20 +261,20 @@ impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
                             mem_index += 1;
                             file_index += 1;
                         }
-                        self.log_message(format!("Loaded {} bytes from `{}' into `{}', offset 0x{:04X}.", load_count, path.display(), id, offset));
+                        info!("Loaded {} bytes from `{}' into `{}', offset 0x{:04X}.", load_count, path.display(), id, offset);
                         if read_len > load_count {
-                            self.log_message(format!("Note: {} bytes from `{}' ({} bytes large) didn't fit.", read_len - load_count, path.display(), read_len));
+                            warn!("{} bytes from `{}' ({} bytes large) didn't fit into `{}' at offset 0x{:04X}.", read_len - load_count, path.display(), read_len, id, offset);
                         }
                         true
                     },
                     Err(error) => {
-                        self.log_message(format!("Failed to load the file `{}' into `{}', offset 0x{:04X}: File reading error: {}.", path.display(), id, offset, error));
+                        error!("Failed to load the file `{}' into `{}', offset 0x{:04X}: File reading error: {}.", path.display(), id, offset, error);
                         false
                     },
                 }
             },
             Err(error) => {
-                self.log_message(format!("Failed to load the file `{}' into `{}', offset 0x{:04X}: File opening error: {}.", path.display(), id, offset, error));
+                error!("Failed to load the file `{}' into `{}', offset 0x{:04X}: File opening error: {}.", path.display(), id, offset, error);
                 false
             }
         }
@@ -340,9 +295,9 @@ impl<T: MemoryChip + MessageLogging> MemoryChipOps for T {
             mem_index += 1;
             input_index += 1;
         }
-        self.log_message(format!("Loaded {} bytes from `{}' into `{}', offset 0x{:04X}.", load_count, input_name, id, offset));
+        info!("Loaded {} bytes from `{}' into `{}', offset 0x{:04X}.", load_count, input_name, id, offset);
         if input_len > load_count {
-            self.log_message(format!("Note: {} bytes from `{}' ({} bytes large) didn't fit.", input_len - load_count, input_name, input_len));
+            warn!("{} bytes from `{}' ({} bytes large) didn't fit into `{}' at offset 0x{:04X}.", input_len - load_count, input_name, input_len, id, offset);
         }
     }
 }
@@ -386,9 +341,7 @@ pub struct MemorySystem {
     pub kbd_mem:  keyboard::KeyboardMemory,
     pub vid_mem:  video::VideoMemory,
 
-    pub cas_rec:  cassette::CassetteRecorder,
-
-    pub rom_choice: u32,
+    pub cas_rec:  cassette::CassetteIO,
 
     // The interrupt request interface is a part of the memory system, to
     // allow any peripheral on the system bus to be able to issue an interrupt
@@ -403,61 +356,44 @@ pub struct MemorySystem {
     // simplicity, this implementation makes only that a possibility:
     pub mode0_int_addr:   u16,
     pub mode2_int_vec:    u8,
-
-    logged_messages:  Vec<String>,
-    messages_present: bool,
 }
 
 impl MemorySystem {
-    pub fn new(config_system: &proj_config::ConfigSystem, startup_logger: &mut util::StartupLogger, selected_rom: u32) -> Option<MemorySystem> {
-
-        let cas_rec = match cassette::CassetteRecorder::new(config_system, startup_logger) {
-            Some(recorder) => { recorder },
-            None => { return None },
-        };
+    pub fn new(ram_size: u16, rom_choice: Option<path::PathBuf>, lowercase_mod: bool) -> MemorySystem {
 
         let mut memory_system = MemorySystem {
-            ram_chip:          RamChip::new("system ram".to_owned(), config_system.config_items.general_ram_size as u16, RAM_BASE),
+            ram_chip:          RamChip::new("system ram".to_owned(), ram_size, RAM_BASE),
             rom_chip:          RomChip::new("system rom".to_owned(), ROM_SIZE, ROM_BASE),
             kbd_mem:           keyboard::KeyboardMemory::new(KBD_BASE),
-            vid_mem:           video::VideoMemory::new(config_system.config_items.video_lowercase_mod, VID_BASE),
-            rom_choice:        selected_rom,
-            cas_rec:           cas_rec,
+            vid_mem:           video::VideoMemory::new(lowercase_mod, VID_BASE),
+            cas_rec:           cassette::CassetteIO::new(),
             nmi_request:       false,
             int_request:       false,
 
             mode0_int_addr:    0,
             mode2_int_vec:     0,
-
-            logged_messages:   Vec::new(),
-            messages_present:  false,
         };
-        memory_system.load_system_rom(config_system);
+        memory_system.load_system_rom(rom_choice);
 
-        Some(memory_system)
+        memory_system
     }
-    pub fn load_system_rom(&mut self, config_system: &proj_config::ConfigSystem) {
-        let rom_choice = match self.rom_choice {
-            1 => { config_system.config_items.general_level_1_rom.clone() },
-            2 => { config_system.config_items.general_level_2_rom.clone() },
-            3 => { config_system.config_items.general_misc_rom.clone() },
-            _ => { panic!("Invalid ROM image selected"); }
-        };
+    pub fn power_off(&mut self) {
+        self.ram_chip.wipe();
+        self.nmi_request = false;
+        self.int_request = false;
+    }
+    pub fn load_system_rom(&mut self, rom_choice: Option<path::PathBuf>) {
 
         let dummy_rom = include_bytes!("dummy_rom/dummy.rom");
         match rom_choice {
-            Some(filename) => {
-                // TODO: Perhaps more delicate handling is needed:
-                let mut rom_file_path = config_system.config_dir_path.clone();
-                rom_file_path.push(filename);
-
+            Some(rom_file_path) => {
                 if !self.rom_chip.load_from_file(&rom_file_path, 0) {
-                    self.rom_chip.log_message("Loading the specified rom file failed, resorting to using the built-in dummy rom.".to_owned());
+                    warn!("Loading the specified rom file failed, resorting to using the built-in dummy rom.");
                     self.rom_chip.load_from_buffer(dummy_rom, "built-in dummy rom file", 0);
                 }
             },
             None => {
-                self.rom_chip.log_message("No system rom file specified, using a buit-in dummy.".to_owned());
+                warn!("No system rom file specified, using a buit-in dummy.");
                 self.rom_chip.load_from_buffer(dummy_rom, "built-in dummy rom file", 0);
             },
         }
@@ -474,17 +410,17 @@ impl MemorySystem {
 }
 
 impl MemIO for MemorySystem {
-    fn read_byte(&mut self, addr: u16, cycle_timestamp: u32) -> u8 {
+    fn read_byte(&mut self, addr: u16) -> u8 {
         if addr >= RAM_BASE && addr <= (RAM_BASE + ((self.ram_chip.data.len() as u16) - 1)) {
-            self.ram_chip.read_byte(addr - RAM_BASE, cycle_timestamp)
+            self.ram_chip.read_byte(addr - RAM_BASE)
         } else if addr >= ROM_BASE && addr <= (ROM_BASE + (ROM_SIZE - 1)) {
-            self.rom_chip.read_byte(addr - ROM_BASE, cycle_timestamp)
+            self.rom_chip.read_byte(addr - ROM_BASE)
         } else if addr >= KBD_BASE && addr <= (KBD_BASE + (KBD_SIZE - 1)) {
-            self.kbd_mem.read_byte(addr - KBD_BASE, cycle_timestamp)
+            self.kbd_mem.read_byte(addr - KBD_BASE)
         } else if addr >= VID_BASE && addr <= (VID_BASE + (VID_SIZE - 1)) {
-            self.vid_mem.read_byte(addr - VID_BASE, cycle_timestamp)
+            self.vid_mem.read_byte(addr - VID_BASE)
         } else {
-            self.log_message(format!("Warning: Failed read: Address 0x{:04X} doesn't belong to any installed device.", addr));
+            warn!("Failed read: Address 0x{:04X} doesn't belong to any installed device.", addr);
 
             // Dunno if this is so for the TRS-80, but in TTL, one would assume
             // that the state of high impedance (neither log. 0 nor 1) would be
@@ -492,72 +428,46 @@ impl MemIO for MemorySystem {
             0xFF
         }
     }
-    fn write_byte(&mut self, addr: u16, val: u8, cycle_timestamp: u32) {
+    fn write_byte(&mut self, addr: u16, val: u8) {
         if addr >= RAM_BASE && addr <= (RAM_BASE + ((self.ram_chip.data.len() as u16) - 1)) {
-            self.ram_chip.write_byte(addr - RAM_BASE, val, cycle_timestamp);
+            self.ram_chip.write_byte(addr - RAM_BASE, val);
         } else if addr >= ROM_BASE && addr <= (ROM_BASE + (ROM_SIZE - 1)) {
-            self.rom_chip.write_byte(addr - ROM_BASE, val, cycle_timestamp);
+            self.rom_chip.write_byte(addr - ROM_BASE, val);
         } else if addr >= KBD_BASE && addr <= (KBD_BASE + (KBD_SIZE - 1)) {
-            self.kbd_mem.write_byte(addr - KBD_BASE, val, cycle_timestamp);
+            self.kbd_mem.write_byte(addr - KBD_BASE, val);
         } else if addr >= VID_BASE && addr <= (VID_BASE + (VID_SIZE - 1)) {
-            self.vid_mem.write_byte(addr - VID_BASE, val, cycle_timestamp);
+            self.vid_mem.write_byte(addr - VID_BASE, val);
         } else {
-            self.log_message(format!("Warning: Failed write of 0x{:02X}: Address 0x{:04X} doesn't belong to any installed device.", val, addr));
+            warn!("Failed write of 0x{:02X}: Address 0x{:04X} doesn't belong to any installed device.", val, addr);
         }
     }
 }
 
 impl PeripheralIO for MemorySystem {
-    fn peripheral_read_byte(&mut self, addr: u16, cycle_timestamp: u32) -> u8 {
-        let port: u8 = (addr & 0x00FF) as u8;
+    fn peripheral_read_byte(&mut self, addr: u16) -> u8 {
+        let port = addr & 0x00FF;
 
-        if port == 0xff {
-            let mut val = self.cas_rec.peripheral_read_byte(addr, cycle_timestamp);
+        if port == CAS_MODESEL_BASE {
+            let mut val = self.cas_rec.peripheral_read_byte(port - CAS_MODESEL_BASE);
             if !self.vid_mem.modesel {
                 val &= 0b1011_1111
             }
 
             val
         } else {
-            self.log_message(format!("Warning: Failed read: Port 0x{:02X} doesn't belong to any installed peripheral device.", port));
+            warn!("Failed read: Port 0x{:02X} doesn't belong to any installed peripheral device.", port);
 
             0xFF
         }
     }
-    fn peripheral_write_byte(&mut self, addr: u16, val: u8, cycle_timestamp: u32) {
-        let port: u8 = (addr & 0x00FF) as u8;
+    fn peripheral_write_byte(&mut self, addr: u16, val: u8) {
+        let port = addr & 0x00FF;
 
-        if port == 0xff {
+        if port == CAS_MODESEL_BASE {
             self.vid_mem.modesel = (val & 0b0000_1000) != 0;
-            self.cas_rec.peripheral_write_byte(addr, val, cycle_timestamp);
+            self.cas_rec.peripheral_write_byte(port - CAS_MODESEL_BASE, val);
         } else {
-            self.log_message(format!("Warning: Failed write of 0x{:02X}: Port 0x{:02X} doesn't belong to any installed peripheral device.", val, port));
+            warn!("Failed write of 0x{:02X}: Port 0x{:02X} doesn't belong to any installed peripheral device.", val, port);
         }
-    }
-}
-
-impl MessageLogging for MemorySystem {
-    fn log_message(&mut self, message: String) {
-        self.logged_messages.push(message);
-        self.messages_present = true;
-    }
-    fn messages_available(&self) -> bool {
-        self.messages_present
-            || self.ram_chip.messages_available()
-            || self.rom_chip.messages_available()
-            || self.kbd_mem.messages_available()
-            || self.vid_mem.messages_available()
-            || self.cas_rec.messages_available()
-    }
-    fn collect_messages(&mut self) -> Vec<String> {
-        let mut logged_thus_far: Vec<String> = self.logged_messages.drain(..).collect();
-        logged_thus_far.append(&mut self.ram_chip.collect_messages());
-        logged_thus_far.append(&mut self.rom_chip.collect_messages());
-        logged_thus_far.append(&mut self.kbd_mem.collect_messages());
-        logged_thus_far.append(&mut self.vid_mem.collect_messages());
-        logged_thus_far.append(&mut self.cas_rec.collect_messages());
-        self.messages_present = false;
-
-        logged_thus_far
     }
 }

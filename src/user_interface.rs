@@ -19,16 +19,15 @@ use std::collections::VecDeque;
 use std::io;
 use std::io::Read;
 use std::io::Write;
-use std::panic;
+use std::ffi::OsStr;
 use std::path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
+use crate::emulator::{EmulatorCommand, EmulatorCassetteCommand, EmulatorConfigCommand, EmulatorStatus};
 use crate::cassette;
-use crate::emulator;
-use crate::memory;
-use crate::memory::MemoryChipOps;
-use crate::proj_config;
 use crate::util;
-use crate::util::MessageLogging;
 
 // Program name and version:
 const PROGRAM_NAME:    &str = env!("CARGO_PKG_NAME");
@@ -122,7 +121,9 @@ enum PauseType {
 enum MachineSubCommand {
     Power { new_state:  bool },
     Reset { full_reset: bool },
-    Pause (PauseType),
+    Restore,
+    SwitchRom(u32),
+    Pause(PauseType),
 }
 
 enum MemorySubCommandArgExclusive {
@@ -139,27 +140,13 @@ enum MemorySubCommand {
     Wipe { device: MemorySubCommandArgInclusive },
 }
 
-enum CassetteSubCommand {
-    Insert { format: cassette::Format, file: String },
-    Eject,
-    Erase,
-    Seek   { position: usize },
-    Rewind,
-}
-
-enum ConfigSubCommand {
-    List,
-    Show   { entry_specifier: String },
-    Change { entry_specifier: String, invocation_text: String },
-}
-
 enum ParsedUserCommand {
     Help     (HelpEntry),
     Messages (MessagesSubCommand),
     Machine  (MachineSubCommand),
     Memory   (MemorySubCommand),
-    Cassette (CassetteSubCommand),
-    Config   (ConfigSubCommand),
+    Cassette (EmulatorCassetteCommand),
+    Config   (EmulatorConfigCommand),
 
     CommandMissingParameter  { sup_command_name: String, sub_command_name: String, parameter_desc: String, parameter_desc_ia: String },
     CommandMissingSubcommand { sup_command_name: String },
@@ -172,7 +159,7 @@ impl ParsedUserCommand {
     pub fn parse(command_string: &str) -> ParsedUserCommand {
         let (command, command_raw) = match util::get_word(command_string, 1) {
                           Some(main_command_text) => { (main_command_text.to_lowercase(), main_command_text.to_owned()) },
-                          None => { panic!("Command string empty."); },
+                          None => { panic!("Command string empty"); },
                       };
         let sub_command = match util::get_word(command_string, 2) {
                               Some(sub_command_text) => { Some((sub_command_text.to_lowercase(), sub_command_text)) },
@@ -320,6 +307,30 @@ impl ParsedUserCommand {
                         } else {
                             ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: type_str_raw, parameter_desc: "reset type".to_owned() }
                         }
+                    } else if sub_command == "restore" {
+                        ParsedUserCommand::Machine(MachineSubCommand::Restore)
+                    } else if sub_command == "switch-rom" {
+                        let rom_nr_str = match parameter_1 {
+                                                               Some((_, parameter_1_raw)) => { parameter_1_raw },
+                                                               None => {
+                                                                   return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "ROM number".to_owned(), parameter_desc_ia: "a".to_owned() };
+                                                               },
+                                                           };
+
+                        let rom_nr = match util::parse_u32_from_str(rom_nr_str.as_str()) {
+                                         Some(offset_val) => {
+                                             offset_val
+                                         },
+                                         None => {
+                                             return ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: rom_nr_str, parameter_desc: "ROM number".to_owned() };
+                                         },
+                                     };
+                        if rom_nr < 1 || rom_nr > 3 {
+                            ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: rom_nr_str, parameter_desc: "ROM number".to_owned() }
+                        } else {
+                            ParsedUserCommand::Machine(MachineSubCommand::SwitchRom(rom_nr))
+                        }
+
                     } else if sub_command == "pause" {
                         let (type_str, type_str_raw) = match parameter_1 {
                                                            Some((parameter_1, parameter_1_raw)) => { (parameter_1, parameter_1_raw) },
@@ -428,7 +439,7 @@ impl ParsedUserCommand {
                         };
                         match util::get_starting_at_word(command_string, 4) {
                             Some(file) => {
-                                ParsedUserCommand::Cassette(CassetteSubCommand::Insert { format: format, file: file })
+                                ParsedUserCommand::Cassette(EmulatorCassetteCommand::Insert { format: format, file: file })
                             },
                             None => {
                                 ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "file".to_owned(), parameter_desc_ia: "a".to_owned() }
@@ -443,18 +454,18 @@ impl ParsedUserCommand {
                                            };
                         match position_str.parse::<usize>() {
                             Ok(position) => {
-                                ParsedUserCommand::Cassette(CassetteSubCommand::Seek { position: position })
+                                ParsedUserCommand::Cassette(EmulatorCassetteCommand::Seek { position: position })
                             },
                             Err(_) => {
                                 ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: position_str, parameter_desc: "position".to_owned() }
                             },
                         }
                     } else if sub_command == "eject" {
-                        ParsedUserCommand::Cassette(CassetteSubCommand::Eject)
+                        ParsedUserCommand::Cassette(EmulatorCassetteCommand::Eject)
                     } else if sub_command == "erase" {
-                        ParsedUserCommand::Cassette(CassetteSubCommand::Erase)
+                        ParsedUserCommand::Cassette(EmulatorCassetteCommand::Erase)
                     } else if sub_command == "rewind" {
-                        ParsedUserCommand::Cassette(CassetteSubCommand::Rewind)
+                        ParsedUserCommand::Cassette(EmulatorCassetteCommand::Rewind)
                     } else {
                         ParsedUserCommand::InvalidSubCommand { sup_command_name: command, sub_command_name: sub_command_raw }
                     }
@@ -467,7 +478,7 @@ impl ParsedUserCommand {
             match sub_command {
                 Some ((sub_command, sub_command_raw)) => {
                     if sub_command == "list" {
-                        ParsedUserCommand::Config(ConfigSubCommand::List)
+                        ParsedUserCommand::Config(EmulatorConfigCommand::List)
                     } else if sub_command == "show" {
                         let entry_specifier = match parameter_1 {
                                                   Some((_, parameter_1_raw)) => { parameter_1_raw },
@@ -475,7 +486,7 @@ impl ParsedUserCommand {
                                                       return ParsedUserCommand::CommandMissingParameter { sup_command_name: command, sub_command_name: sub_command, parameter_desc: "entry specifier".to_owned(), parameter_desc_ia: "an".to_owned() };
                                                   },
                                               };
-                        ParsedUserCommand::Config(ConfigSubCommand::Show { entry_specifier: entry_specifier })
+                        ParsedUserCommand::Config(EmulatorConfigCommand::Show { entry_specifier: entry_specifier })
                     } else if sub_command == "change" {
                         let entry_specifier = match parameter_1 {
                                                   Some((_, parameter_1_raw)) => { parameter_1_raw },
@@ -492,7 +503,7 @@ impl ParsedUserCommand {
                         if equals_sign.chars().next().expect("Some((_, parameter_2_raw)) implies non-zero length") != '=' {
                             return ParsedUserCommand::InvalidParameter { sup_command_name: command, sub_command_name: sub_command, parameter_text: equals_sign, parameter_desc: "new value specifier".to_owned() };
                         }
-                        ParsedUserCommand::Config(ConfigSubCommand::Change { entry_specifier: entry_specifier, invocation_text: command_string.to_owned() })
+                        ParsedUserCommand::Config(EmulatorConfigCommand::Change { entry_specifier: entry_specifier, invocation_text: command_string.to_owned() })
                     } else {
                         ParsedUserCommand::InvalidSubCommand { sup_command_name: command, sub_command_name: sub_command_raw }
                     }
@@ -507,8 +518,12 @@ impl ParsedUserCommand {
     }
 }
 
+
 pub struct UserInterface {
     window:                      pancurses::Window,
+    exit_request:                bool,
+    logic_core_thread_running:   bool,
+    video_thread_running:        bool,
 
     screen_width:                usize,
     screen_height:               usize,
@@ -531,9 +546,9 @@ pub struct UserInterface {
     prompt_history_max_entries:  usize,
     prompt_history_pos:          usize,  // 0 refers to prompt_text
 
-    status_displayed_halted:     bool,
-    status_displayed_powered_on: bool,
-    status_displayed_paused:     bool,
+    cpu_halted:                  bool,
+    machine_powered_on:          bool,
+    machine_paused:              bool,
 }
 
 impl UserInterface {
@@ -557,6 +572,9 @@ impl UserInterface {
 
         let mut user_interface = UserInterface {
                                      window:                      window,
+                                     exit_request:                false,
+                                     logic_core_thread_running:   false,
+                                     video_thread_running:        false,
 
                                      screen_width:                0,
                                      screen_height:               0,
@@ -579,24 +597,106 @@ impl UserInterface {
                                      prompt_history_max_entries:  MAX_HISTORY_ENTRIES,
                                      prompt_history_pos:          0,
 
-                                     status_displayed_halted:     false,
-                                     status_displayed_powered_on: false,
-                                     status_displayed_paused:     false,
+                                     cpu_halted:                  false,
+                                     machine_powered_on:          false,
+                                     machine_paused:              false,
                                  };
         user_interface.handle_resize_event();
 
         Some(user_interface)
     }
-    pub fn consume_startup_logger(&mut self, mut startup_logger: util::StartupLogger) {
-        for message in startup_logger.collect_messages() {
-            self.emulator_message(message.as_str());
+    pub fn run(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, emu_stat_rx: &mpsc::Receiver<EmulatorStatus>, msg_source: &util::MessageLogger) {
+        let sleep_len = Duration::from_millis(10);
+        let mut waiting_for_logic_core_thread = true;
+        let mut waiting_for_video_thread = true;
+
+        while !self.exit_request || ((waiting_for_logic_core_thread || self.logic_core_thread_running) || (waiting_for_video_thread || self.video_thread_running)) {
+            self.handle_user_input(emu_cmd_tx);
+
+            for emulator_status in emu_stat_rx.try_iter() {
+                self.handle_emulator_status_info(emulator_status, &mut waiting_for_logic_core_thread, &mut waiting_for_video_thread);
+            }
+            match msg_source.collect_messages() {
+                Some(messages) => {
+                    for logged_msg in messages {
+                        self.emulator_message(logged_msg.as_str());
+                    }
+                },
+                None => { },
+            }
+            self.update_screen();
+            thread::sleep(sleep_len);
         }
     }
-    pub fn handle_user_input(&mut self,
-                             config_system: &mut proj_config::ConfigSystem,
-                             runtime: &mut emulator::Runtime,
-                             devices: &mut emulator::Devices,
-                             memory_system: &mut memory::MemorySystem) {
+    fn handle_emulator_status_info(&mut self, emulator_status: EmulatorStatus, waiting_for_logic_core_thread: &mut bool, waiting_for_video_thread: &mut bool) {
+
+        match emulator_status {
+            EmulatorStatus::Created => {
+                self.logic_core_thread_running = true;
+                *waiting_for_logic_core_thread = false;
+                self.emulator_message("Logic core thread started.");
+            },
+            EmulatorStatus::Destroyed => {
+                if !self.exit_request {
+                    panic!("Unexpected termination of the logic core thread");
+                } else {
+                    self.logic_core_thread_running = false;
+                }
+            },
+            EmulatorStatus::TerminateNotification => {
+                self.exit_request = true;
+            },
+            EmulatorStatus::VideoThreadCreated => {
+                self.video_thread_running = true;
+                *waiting_for_video_thread = false;
+                self.emulator_message("SDL2 front-end thread started.");
+            },
+            EmulatorStatus::VideoThreadDestroyed => {
+                if !self.exit_request {
+                    panic!("Unexpected termination of the SDL2 front-end thread");
+                } else {
+                    self.video_thread_running = false;
+                }
+            },
+            EmulatorStatus::PoweredOn => {
+                if !self.machine_powered_on {
+                    self.machine_powered_on = true;
+                    self.redraw_needed = true;
+                }
+            },
+            EmulatorStatus::PoweredOff => {
+                if self.machine_powered_on {
+                    self.machine_powered_on = false;
+                    self.redraw_needed = true;
+                }
+            },
+            EmulatorStatus::Paused => {
+                if !self.machine_paused {
+                    self.machine_paused = true;
+                    self.redraw_needed = true;
+                }
+            },
+            EmulatorStatus::NotPaused => {
+                if self.machine_paused {
+                    self.machine_paused = false;
+                    self.redraw_needed = true;
+                }
+            },
+            EmulatorStatus::CpuHalted => {
+                if !self.cpu_halted {
+                    self.cpu_halted = true;
+                    self.redraw_needed = true;
+                }
+            },
+            EmulatorStatus::CpuNotHalted => {
+                if self.cpu_halted {
+                    self.cpu_halted = false;
+                    self.redraw_needed = true;
+                }
+            },
+        }
+    }
+    pub fn handle_user_input(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
         loop {
             let user_input = self.window.getch();
             match user_input {
@@ -604,7 +704,7 @@ impl UserInterface {
                     match input {
                         pancurses::Input::KeyResize     => { self.handle_resize_event() },
 
-                        pancurses::Input::KeyF1         => { self.execute_command("help", config_system, runtime, memory_system); },
+                        pancurses::Input::KeyF1         => { self.execute_command(emu_cmd_tx, "help"); },
 
                         pancurses::Input::KeyNPage      => { self.scroll_lines_down(); },
                         pancurses::Input::KeyPPage      => { self.scroll_lines_up(); },
@@ -618,11 +718,11 @@ impl UserInterface {
                         pancurses::Input::KeyHome       => { self.prompt_handle_home_key(); },
                         pancurses::Input::KeyEnd        => { self.prompt_handle_end_key(); },
 
-                        pancurses::Input::KeyEnter      => { self.prompt_handle_enter_key(config_system, runtime, devices, memory_system); },
+                        pancurses::Input::KeyEnter      => { self.prompt_handle_enter_key(emu_cmd_tx); },
 
                         pancurses::Input::Unknown(input_code) => {
                             match input_code {
-                                155 => { self.prompt_handle_enter_key(config_system, runtime, devices, memory_system); },        // Enter (keypad, w32)
+                                155 => { self.prompt_handle_enter_key(emu_cmd_tx); },        // Enter (keypad, w32)
                                 _   => { },
                             }
                         },
@@ -632,10 +732,10 @@ impl UserInterface {
                                 self.prompt_insert_char(util::ascii_to_printable_char(input_char as u8));
                             } else {
                                 match input_char as u8 {
-                                    0x08  => { self.prompt_handle_backspace_key(); },                                            // Backspace (w32)
-                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },                          // CTRL+L
-                                    0x0D  => { self.prompt_handle_enter_key(config_system, runtime, devices, memory_system); },  // Enter
-                                    0x15  => { self.prompt_handle_ctrl_u(); },                                                   // CTRL+U
+                                    0x08  => { self.prompt_handle_backspace_key(); },                    // Backspace (w32)
+                                    0x0C  => { self.window.clearok(true); self.redraw_needed = true; },  // CTRL+L
+                                    0x0D  => { self.prompt_handle_enter_key(emu_cmd_tx); },  // Enter
+                                    0x15  => { self.prompt_handle_ctrl_u(); },                           // CTRL+U
                                     _     => { },
                                 }
                             }
@@ -672,10 +772,7 @@ impl UserInterface {
             self.redraw_needed = true;
         }
     }
-    pub fn execute_command(&mut self, input_str: &str,
-                           config_system: &mut proj_config::ConfigSystem,
-                           runtime: &mut emulator::Runtime,
-                           memory_system: &mut memory::MemorySystem) {
+    pub fn execute_command(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, input_str: &str) {
 
         let command = match util::get_word(input_str, 1) {
                           Some(command_word) => { command_word.to_lowercase() },
@@ -683,27 +780,30 @@ impl UserInterface {
                       };
 
         if command == "exit" || command == "quit" {
-            runtime.curses_exit_request = true;
+
+            emu_cmd_tx.send(EmulatorCommand::Terminate).unwrap();
+
+        } else if command == "nmi" {
+
+            emu_cmd_tx.send(EmulatorCommand::NmiRequest).unwrap();
+            self.emulator_message("Issued a NMI request.");
 
         // Alias for "clear screen":
         } else if command == "clear" || command == "cls" {
-            self.execute_command("messages clear all", config_system, runtime, memory_system)
+            self.execute_command(emu_cmd_tx, "messages clear all")
 
         // Alias for "pause" and "unpause":
         } else if command == "pause" {
-            self.execute_command("machine pause on", config_system, runtime, memory_system)
+            self.execute_command(emu_cmd_tx, "machine pause on")
 
         } else if command == "unpause" {
-            self.execute_command("machine pause off", config_system, runtime, memory_system)
+            self.execute_command(emu_cmd_tx, "machine pause off")
 
         } else {
-            self.execute_parsed_command (ParsedUserCommand::parse(input_str), config_system, runtime, memory_system)
+            self.execute_parsed_command(emu_cmd_tx, ParsedUserCommand::parse(input_str));
         }
     }
-    fn execute_parsed_command (&mut self, command: ParsedUserCommand,
-                               config_system: &mut proj_config::ConfigSystem,
-                               runtime: &mut emulator::Runtime,
-                               memory_system: &mut memory::MemorySystem) {
+    fn execute_parsed_command(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, command: ParsedUserCommand) {
         match command {
             ParsedUserCommand::Help(help_entry) => {
                 self.show_help_entry(help_entry);
@@ -712,16 +812,16 @@ impl UserInterface {
                 self.execute_messages_subcommand(sub_command);
             },
             ParsedUserCommand::Machine(sub_command) => {
-                self.execute_machine_subcommand(sub_command, runtime);
+                self.execute_machine_subcommand(emu_cmd_tx, sub_command);
             },
             ParsedUserCommand::Memory(sub_command) => {
-                self.execute_memory_subcommand(sub_command, memory_system);
+                self.execute_memory_subcommand(emu_cmd_tx, sub_command);
             },
             ParsedUserCommand::Cassette(sub_command) => {
-                self.execute_cassette_subcommand(sub_command, config_system, memory_system);
+                self.execute_cassette_subcommand(emu_cmd_tx, sub_command);
             },
             ParsedUserCommand::Config(sub_command) => {
-                self.execute_config_subcommand(sub_command, config_system, runtime, memory_system);
+                self.execute_config_subcommand(emu_cmd_tx, sub_command);
             },
             ParsedUserCommand::CommandMissingParameter  { sup_command_name, sub_command_name, parameter_desc, parameter_desc_ia } => {
                 self.emulator_message(format!("The `{} {}' command requires {} {} parameter, see: /help {}", sup_command_name, sub_command_name, parameter_desc_ia, parameter_desc, sup_command_name).as_str());
@@ -789,10 +889,16 @@ impl UserInterface {
                 self.emulator_message("");
                 self.emulator_message("    machine power <on|off>        - powers the machine on or off.");
                 self.emulator_message("    machine reset [cpu|full]      - performs a CPU reset, or a full reset.");
+                self.emulator_message("    machine restore               - puts the machine into a default state.");
+                self.emulator_message("    machine switch-rom <num>      - change the currently used BASIC rom (Level 1 or 2, or 3 for misc rom).");
                 self.emulator_message("    machine pause [on|off|toggle] - pauses or unpauses the machine.");
                 self.emulator_message("    machine unpause               - alias for `machine pause off'.");
                 self.emulator_message("");
                 self.emulator_message("With no argument, `machine reset' performs a CPU reset, and `machine pause' pauses the machine's emulation.");
+                self.emulator_message("");
+                self.emulator_message("The `machine switch-rom' command is used for changing the currently selected system ROM.  Plese note that switching the ROM involves restarting the machine, so any unsaved progress will be lost.  Valid options are 1 for Level 1 BASIC, 2 for Level 2 BASIC, and 3 for the miscellaneous rom.");
+                self.emulator_message("");
+                self.emulator_message("The `machine restore' command, on the other hand, is useful for when you've been messing around with the `memory load' and `memory wipe' commands, and want to get back to a normal state by restoring the currently selected system ROM.");
             },
             HelpEntry::Memory => {
                 self.emulator_message("The `memory' command has the following sub-commands:");
@@ -802,7 +908,7 @@ impl UserInterface {
                 self.emulator_message("");
                 self.emulator_message("The offset specifier in `memory load' can be in either decimal, octal, binary or hexadecimal notation.  The default is decimal, a prefix of 0b means binary, 0x means hexadecimal, 0 means octal, and a postfix of h means hexadecimal.");
                 self.emulator_message("");
-                self.emulator_message("In the current implementation, file names may not contain spaces and non-ascii characters.");
+                self.emulator_message("In the current implementation, file names may not contain spaces and non-ascii characters.  Also, if you pass `default' as the filename to `memory load rom', it will load a default rom image from a pre-defined location.");
             },
             HelpEntry::Cassette => {
                 self.emulator_message("The `cassette' command has the following sub-commands:");
@@ -959,268 +1065,145 @@ impl UserInterface {
         self.screen_lines = VecDeque::with_capacity(self.max_screen_lines);
         self.emulator_message("All messages cleared.");
     }
-    fn execute_machine_subcommand(&mut self, sub_command: MachineSubCommand, runtime: &mut emulator::Runtime) {
+    fn execute_machine_subcommand(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, sub_command: MachineSubCommand) {
         match sub_command {
             MachineSubCommand::Power { new_state } => {
-                runtime.power_desired = new_state;
+                if new_state == true {
+                    self.power_on_machine(emu_cmd_tx);
+                } else {
+                    self.power_off_machine(emu_cmd_tx);
+                }
             },
             MachineSubCommand::Reset { full_reset } => {
                 if full_reset == true {
-                    runtime.reset_full_request = true;
+                    self.reset_machine_full(emu_cmd_tx);
                 } else {
-                    runtime.reset_cpu_request = true;
+                    self.reset_machine(emu_cmd_tx);
                 }
+            },
+            MachineSubCommand::Restore => {
+                self.restore_machine(emu_cmd_tx);
+            },
+            MachineSubCommand::SwitchRom(rom_nr) => {
+                emu_cmd_tx.send(EmulatorCommand::SwitchRom(rom_nr)).unwrap();
             },
             MachineSubCommand::Pause(pause_type) => {
                 match pause_type {
                     PauseType::Pause => {
-                        runtime.pause_desired = true;
+                        self.pause_machine(emu_cmd_tx);
                     },
                     PauseType::Unpause => {
-                        runtime.pause_desired = false;
+                        self.unpause_machine(emu_cmd_tx);
                     },
                     PauseType::Toggle => {
-                        runtime.pause_desired = !runtime.paused;
+                        if self.machine_paused {
+                            self.unpause_machine(emu_cmd_tx);
+                        } else {
+                            self.pause_machine(emu_cmd_tx);
+                        }
                     },
                 }
             },
         }
     }
-    fn execute_memory_subcommand(&mut self, sub_command: MemorySubCommand, memory_system: &mut memory::MemorySystem) {
+    fn power_off_machine(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+
+        if !self.machine_powered_on {
+            self.emulator_message("The machine is already powered off.");
+        } else {
+            emu_cmd_tx.send(EmulatorCommand::PowerOff).unwrap();
+        }
+    }
+    fn power_on_machine(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+
+        if self.machine_powered_on {
+            self.emulator_message("The machine is already powered on.");
+        } else {
+            emu_cmd_tx.send(EmulatorCommand::PowerOn).unwrap();
+        }
+    }
+    fn restore_machine(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+
+        if self.machine_powered_on {
+            self.emulator_message("Cannot restore the machine while it's running.");
+        } else {
+            self.emulator_message("The machine shall be restored back to its factory-original state.");
+            emu_cmd_tx.send(EmulatorCommand::Pause).unwrap();
+            emu_cmd_tx.send(EmulatorCommand::ResetHard).unwrap();
+            emu_cmd_tx.send(EmulatorCommand::PowerOff).unwrap();
+            self.execute_command(emu_cmd_tx, "memory load rom default");
+            if !self.machine_paused {
+                emu_cmd_tx.send(EmulatorCommand::Unpause).unwrap();
+            }
+        }
+    }
+    fn reset_machine_full(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+        if self.machine_powered_on {
+            emu_cmd_tx.send(EmulatorCommand::ResetHard).unwrap();
+        } else {
+            self.emulator_message("Cannot reset a powered-off machine.");
+        }
+    }
+    fn reset_machine(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+        if self.machine_powered_on {
+            emu_cmd_tx.send(EmulatorCommand::ResetSoft).unwrap();
+        } else {
+            self.emulator_message("Cannot reset a powered-off machine.");
+        }
+    }
+    fn pause_machine(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+        if self.machine_paused {
+            self.emulator_message("The machine emulation is already paused.");
+        } else {
+            emu_cmd_tx.send(EmulatorCommand::Pause).unwrap();
+        }
+    }
+    fn unpause_machine(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
+        if !self.machine_paused {
+            self.emulator_message("The machine emulation is already not paused.");
+        } else {
+            emu_cmd_tx.send(EmulatorCommand::Unpause).unwrap();
+        }
+    }
+    fn execute_memory_subcommand(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, sub_command: MemorySubCommand) {
         match sub_command {
             MemorySubCommand::Load { device, path, offset } => {
                 match device {
                     MemorySubCommandArgExclusive::RAM => {
-                        memory_system.ram_chip.load_from_file(path, offset);
+                        emu_cmd_tx.send(EmulatorCommand::LoadSystemRam { path: path, offset: offset }).unwrap();
                     },
                     MemorySubCommandArgExclusive::ROM => {
-                        memory_system.rom_chip.load_from_file(path, offset);
+                        if path == ("default".as_ref() as &OsStr) {
+                            emu_cmd_tx.send(EmulatorCommand::LoadSystemRomDefault).unwrap();
+                        } else {
+                            emu_cmd_tx.send(EmulatorCommand::LoadSystemRom { path: path, offset: offset }).unwrap();
+                        }
                     },
                 }
             },
             MemorySubCommand::Wipe { device } => {
                 match device {
                     MemorySubCommandArgInclusive::RAM => {
-                        memory_system.ram_chip.wipe();
+                        emu_cmd_tx.send(EmulatorCommand::WipeSystemRam).unwrap();
                     },
                     MemorySubCommandArgInclusive::ROM => {
-                        memory_system.rom_chip.wipe();
+                        emu_cmd_tx.send(EmulatorCommand::WipeSystemRom).unwrap();
                     },
                     MemorySubCommandArgInclusive::Both => {
-                        memory_system.ram_chip.wipe();
-                        memory_system.rom_chip.wipe();
+                        emu_cmd_tx.send(EmulatorCommand::WipeSystemRam).unwrap();
+                        emu_cmd_tx.send(EmulatorCommand::WipeSystemRom).unwrap();
                     },
                 }
             },
         }
     }
-    fn execute_cassette_subcommand(&mut self, sub_command: CassetteSubCommand, config_system: &mut proj_config::ConfigSystem, memory_system: &mut memory::MemorySystem) {
-        match sub_command {
-            CassetteSubCommand::Insert { format, file } => {
-                if file.to_lowercase() == "none" {
-                    self.emulator_message(format!("A filename of `{}' is not allowed, since the config system would understand it as a lack of a cassette.", file).as_str());
-                } else {
-                    match config_system.change_config_entry("cassette_file", format!("= {}", file).as_str()) {
-                        Err(error) => {
-                            self.emulator_message(format!("Failed to set the cassette file in the config system: {}.", error).as_str());
-                        },
-                        Ok(..) => {
-                            memory_system.cas_rec.reload_cassette_file(config_system);
-                            match config_system.change_config_entry("cassette_file_format", match format {
-                                                                                                cassette::Format::CAS => { "= CAS" },
-                                                                                                cassette::Format::CPT => { "= CPT" },
-                                                                                            }) {
-                                Err(error) => {
-                                    self.emulator_message(format!("Failed to set the cassette file format in the config system: {}.", error).as_str());
-                                },
-                                Ok(..) => {
-                                    memory_system.cas_rec.change_cassette_data_format(config_system);
-                                    match config_system.change_config_entry("cassette_file_offset", "= 0") {
-                                        Err(error) => {
-                                            self.emulator_message(format!("Failed to set the cassette file offset in the config system: {}.", error).as_str());
-                                        },
-                                        Ok(..) => {
-                                            memory_system.cas_rec.update_cassette_file_offset(config_system);
-                                        }
-                                    }
-                                },
-                            }
-                        }
-                    }
-                }
-            },
-            CassetteSubCommand::Eject => {
-                match config_system.config_items.cassette_file {
-
-                    Some(..) => {
-                        match config_system.change_config_entry("cassette_file", "= none") {
-                            Err(error) => {
-                                self.emulator_message(format!("Failed to update the cassette file field in the config system: {}.", error).as_str());
-                            },
-                            Ok(..) => {
-                                memory_system.cas_rec.reload_cassette_file(config_system);
-                                self.emulator_message("Cassette ejected.");
-
-                                match config_system.change_config_entry("cassette_file_offset", "= 0") {
-                                    Ok(_) => {
-                                        memory_system.cas_rec.update_cassette_file_offset(config_system);
-                                    },
-                                    Err(error) => {
-                                        self.emulator_message(format!("Note: Failed to reset the the file offset to 0: {}.", error).as_str());
-                                    },
-                                }
-                            },
-                        }
-                    },
-                    None => {
-                        self.emulator_message("The cassette drive is already empty.");
-                    },
-                }
-            },
-            CassetteSubCommand::Seek { position } => {
-                match config_system.change_config_entry("cassette_file_offset", format!("= {}", position).as_str()) {
-                    Err(error) => {
-                        self.emulator_message(format!("Failed to set the cassette file offset in the config system: {}.", error).as_str());
-                    },
-                    Ok(..) => {
-                        memory_system.cas_rec.update_cassette_file_offset(config_system);
-                        self.emulator_message(format!("Cassette rewound to position {}.", position).as_str());
-                    },
-                }
-            },
-            CassetteSubCommand::Rewind => {
-                match config_system.change_config_entry("cassette_file_offset", "= 0") {
-                    Err(error) => {
-                        self.emulator_message(format!("Failed to set the cassette file offset in the config system: {}.", error).as_str());
-                    },
-                    Ok(..) => {
-                        memory_system.cas_rec.update_cassette_file_offset(config_system);
-                        self.emulator_message("Cassette rewound back to the beginning.");
-                    },
-                }
-            },
-            CassetteSubCommand::Erase => {
-                memory_system.cas_rec.erase_cassette();
-            },
-        }
+    fn execute_cassette_subcommand(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, sub_command: EmulatorCassetteCommand) {
+        emu_cmd_tx.send(EmulatorCommand::CassetteCommand(sub_command)).unwrap();
     }
-    fn execute_config_subcommand(&mut self, sub_command: ConfigSubCommand, config_system: &mut proj_config::ConfigSystem, runtime: &mut emulator::Runtime, memory_system: &mut memory::MemorySystem) {
-        match sub_command {
-            ConfigSubCommand::List => {
-                let config_entries = match config_system.get_config_entry_current_state_all() {
-                    Ok(entries) => { entries },
-                    Err(error) => {
-                        self.emulator_message(format!("Failed to retrieve a listing of config entries: {}.", error).as_str());
-                        return;
-                    },
-                };
-                self.emulator_message("Listing of configuration entries:");
-                for config_entry in config_entries {
-                    self.emulator_message(&config_entry);
-                }
-            },
-            ConfigSubCommand::Show { entry_specifier } => {
-                let config_entry = match config_system.get_config_entry_current_state(&entry_specifier) {
-                    Ok(entry) => { entry },
-                    Err(error) => {
-                        self.emulator_message(format!("Failed to retrieve the requested config entry: {}.", error).as_str());
-                        return;
-                    },
-                };
-                self.emulator_message(&config_entry);
-            },
-            ConfigSubCommand::Change { entry_specifier, invocation_text } => {
-                match config_system.change_config_entry(&entry_specifier, &invocation_text) {
-                    Ok(apply_action) => {
-                        match apply_action {
-                            proj_config::ConfigChangeApplyAction::RomChange(which) => {
-                                if which == memory_system.rom_choice {
-                                    runtime.update_rom_request = true;
-                                } else {
-                                    self.emulator_message("Configuration updated.");
-                                }
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeRamSize => {
-                                memory_system.ram_chip.change_size(config_system.config_items.general_ram_size as u16);
-                                self.emulator_message("Ram size changed.");
-                            },
-                            proj_config::ConfigChangeApplyAction::UpdateMsPerKeypress => {
-                                runtime.scheduler_update = true;
-                                self.emulator_message("Miliseconds per keypress setting updated.");
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeWindowedResolution => {
-                                if !runtime.fullscreen {
-                                    runtime.resolution_update = true;
-                                    self.emulator_message("Windowed mode resolution changed.");
-                                } else {
-                                    self.emulator_message("Configuration updated.");
-                                }
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeFullscreenResolution => {
-                                if runtime.fullscreen {
-                                    runtime.resolution_update = true;
-                                    self.emulator_message("Fullscreen mode resolution changed.");
-                                } else {
-                                    self.emulator_message("Configuration updated.");
-                                }
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeColor => {
-                                runtime.video_textures_update = true;
-                                self.emulator_message("Color settings updated.");
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeHwAccelUsage => {
-                                runtime.video_system_update = true;
-                                self.emulator_message("Hardware acceleration usage setting changed.");
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeVsyncUsage => {
-                                if runtime.hw_accel_used {
-                                    runtime.video_system_update = true;
-                                    self.emulator_message("Vertical synchronization usage setting changed.");
-                                } else {
-                                    self.emulator_message("Configuration updated.");
-                                }
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeCharacterGenerator => {
-                                runtime.video_textures_update = true;
-                                self.emulator_message("Character generator changed.");
-                            },
-                            proj_config::ConfigChangeApplyAction::ChangeLowercaseModUsage => {
-                                memory_system.vid_mem.update_lowercase_mod(config_system.config_items.video_lowercase_mod);
-                                if config_system.config_items.video_lowercase_mod {
-                                    self.emulator_message("Lowercase mod enabled.");
-                                } else {
-                                    self.emulator_message("Lowercase mod disabled.");
-                                }
-                            },
-                            proj_config::ConfigChangeApplyAction::UpdateCassetteFile => {
-                                memory_system.cas_rec.reload_cassette_file(config_system);
-                                self.emulator_message("Cassette file changed.");
-                            },
-                            proj_config::ConfigChangeApplyAction::UpdateCassetteFileFormat => {
-                                memory_system.cas_rec.change_cassette_data_format(config_system);
-                                self.emulator_message("Cassette file data format changed.");
-                            },
-                            proj_config::ConfigChangeApplyAction::UpdateCassetteFileOffset => {
-                                memory_system.cas_rec.update_cassette_file_offset(config_system);
-                                self.emulator_message("Cassette file offset changed.");
-                            },
-                            proj_config::ConfigChangeApplyAction::Nothing => {
-                                self.emulator_message("Configuration updated.");
-                            },
-                            proj_config::ConfigChangeApplyAction::AlreadyUpToDate => {
-                                self.emulator_message("Nothing to change.");
-                            },
-                        }
-                    },
-                    Err(error) => {
-                        self.emulator_message(format!("Failed to perform the requested configuration change: {}.", error).as_str());
-                        return;
-                    },
-                }
-            },
-        }
+    fn execute_config_subcommand(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>, sub_command: EmulatorConfigCommand) {
+        emu_cmd_tx.send(EmulatorCommand::ConfigCommand(sub_command)).unwrap();
     }
-    fn send_to_console(&mut self, _input_str: String, _devices: &mut emulator::Devices) {
+    fn send_to_console(&mut self, _input_str: String) {
         self.emulator_message("Serial console interface not yet implemented.");
     }
     pub fn add_screen_line(&mut self, line_content: String, line_type: ScreenLineType) {
@@ -1280,7 +1263,7 @@ impl UserInterface {
                 self.screen_lines.swap(0, 1);
             },
             Action::AppendToLast => {
-                let last_line_mut = self.screen_lines.front_mut().expect(".expect() call: If it didn't exist, we wouldn't be appending to it");
+                let last_line_mut = self.screen_lines.front_mut().expect("if it didn't exist, we wouldn't be appending to it");
                 let last_line_old_phys = last_line_mut.physical_lines(self.screen_width);
 
                 last_line_mut.line_content.push_str(line_content.as_str());
@@ -1300,7 +1283,7 @@ impl UserInterface {
 
         self.redraw_needed = true;
     }
-    pub fn emulator_message(&mut self, line_content: &str) {
+    fn emulator_message(&mut self, line_content: &str) {
         // For the sake of simplicity, we only allow ASCII:
         let mut filtered_line_content = String::new();
 
@@ -1314,10 +1297,10 @@ impl UserInterface {
 
         self.add_screen_line(filtered_line_content, ScreenLineType::EmulatorMessage);
     }
-    pub fn machine_line_add_char(&mut self, char_to_add: char) {
+    fn machine_line_add_char(&mut self, char_to_add: char) {
         self.add_screen_line(format!("{}", char_to_add), ScreenLineType::MachineMessage { complete: false });
     }
-    pub fn machine_line_finalize(&mut self) {
+    fn machine_line_finalize(&mut self) {
         self.add_screen_line("".to_owned(), ScreenLineType::MachineMessage { complete: true });
     }
     fn scroll_lines_up(&mut self) {
@@ -1477,7 +1460,7 @@ impl UserInterface {
             self.redraw_needed = true;
         }
     }
-    fn prompt_handle_enter_key(&mut self, config_system: &mut proj_config::ConfigSystem, runtime: &mut emulator::Runtime, devices: &mut emulator::Devices, memory_system: &mut memory::MemorySystem) {
+    fn prompt_handle_enter_key(&mut self, emu_cmd_tx: &mpsc::Sender<EmulatorCommand>) {
         let entered_text = match self.prompt_history_pos {
             0 => { self.prompt_text.clone() },
             _ => { self.prompt_history[self.prompt_history_pos - 1].clone() },
@@ -1490,16 +1473,16 @@ impl UserInterface {
         self.scroll_prompt_if_needed();
         self.redraw_needed = true;
 
-        if (entered_text.len() > 0) && (entered_text.chars().next().expect(".expect() call: Somehow there isn't a first character even though entered_text.len() > 0 evaluated to true") == '/') {
+        if (entered_text.len() > 0) && (entered_text.chars().next().expect("somehow there isn't a first character even though entered_text.len() > 0 evaluated to true") == '/') {
             let (_, command_str) = entered_text.as_str().split_at(1);
 
-            if (command_str.len() > 0) && (command_str.chars().next().expect(".expect() call: Somehow there isn't a first character even though command_str.len() > 0 evaluated to true") == '/') {
-                 self.send_to_console(command_str.to_owned(), devices);
+            if (command_str.len() > 0) && (command_str.chars().next().expect("somehow there isn't a first character even though command_str.len() > 0 evaluated to true") == '/') {
+                 self.send_to_console(command_str.to_owned());
             } else {
-                self.execute_command(command_str, config_system, runtime, memory_system);
+                self.execute_command(emu_cmd_tx, command_str);
             }
         } else {
-            self.send_to_console(entered_text, devices);
+            self.send_to_console(entered_text);
         }
     }
     fn prompt_add_to_history(&mut self, to_add: &str) {
@@ -1516,48 +1499,15 @@ impl UserInterface {
         self.prompt_history.truncate(self.prompt_history_max_entries - 1);
         self.prompt_history.push_front(to_add.to_owned());
     }
-    pub fn collect_logged_messages(&mut self,
-                                   runtime: &mut emulator::Runtime,
-                                   devices: &mut emulator::Devices,
-                                   memory_system: &mut memory::MemorySystem) {
+    pub fn update_screen(&mut self) {
 
-        if devices.messages_available() {
-            for message in devices.collect_messages() {
-                self.emulator_message(message.as_str());
-            }
-        }
-
-        if memory_system.messages_available() {
-            for message in memory_system.collect_messages() {
-                self.emulator_message(message.as_str());
-            }
-        }
-
-        if runtime.messages_available() {
-            for message in runtime.collect_messages() {
-                self.emulator_message(message.as_str());
-            }
-        }
-    }
-    pub fn update_screen(&mut self,
-                         runtime: &emulator::Runtime,
-                         devices: &emulator::Devices) {
-
-        if self.redraw_needed
-            || self.status_displayed_halted != devices.cpu.halted
-            || self.status_displayed_powered_on != runtime.powered_on
-            || self.status_displayed_paused != runtime.paused {
-
-            // Update cached values:
-            self.status_displayed_halted = devices.cpu.halted;
-            self.status_displayed_powered_on = runtime.powered_on;
-            self.status_displayed_paused = runtime.paused;
+        if self.redraw_needed {
 
             self.window.erase();
 
             if self.screen_too_small {
                 self.window.mv(0, 0);
-                self.window.printw(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH).as_str());
+                self.window.printw(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH));
             } else {
                 self.render_lines();
                 self.render_status_strips();
@@ -1696,7 +1646,7 @@ impl UserInterface {
 
         // Write in some text:
         self.window.mv(TOP_STRIP_TOP_OFFSET as i32, 1);
-        self.window.printw(format!("{} v{} - TRS-80 Model I Emulator", PROGRAM_NAME, PROGRAM_VERSION).as_str());
+        self.window.printw(format!("{} v{} - z80 emulator", PROGRAM_NAME, PROGRAM_VERSION).as_str());
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
 
         self.window.mv((self.screen_height - BOTTOM_STRIP_BOTTOM_OFFSET) as i32 - 1, 1);
@@ -1706,7 +1656,7 @@ impl UserInterface {
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
         self.window.attron(pancurses::A_BOLD);
-        if self.status_displayed_powered_on {
+        if self.machine_powered_on {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
             self.window.printw("power on");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
@@ -1721,7 +1671,7 @@ impl UserInterface {
         self.window.printw("]");
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
-        if self.status_displayed_powered_on || self.status_displayed_paused {
+        if self.machine_powered_on || self.machine_paused {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
             self.window.printw(" ");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
@@ -1730,11 +1680,11 @@ impl UserInterface {
             self.window.printw("[");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
-            if self.status_displayed_paused {
+            if self.machine_paused {
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
                 self.window.printw("paused");
                 self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
-            } else if self.status_displayed_halted {
+            } else if self.cpu_halted {
                 self.window.attron(pancurses::A_BOLD);
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
                 self.window.printw("halted");
@@ -1803,30 +1753,6 @@ impl UserInterface {
                 let _ = handle.read(&mut in_char);
             },
         };
-    }
-    pub fn attach_panic_handler() {
-        panic::set_hook(Box::new(|panic_info| {
-            pancurses::endwin();
-            eprintln!("");
-
-            match panic_info.location() {
-                Some(location) => {
-                    eprint!("Panic occured in `{}', line {}: ", location.file(), location.line());
-                },
-                None => {
-                    eprint!("Panic occured: ");
-                },
-            }
-            let panic_message = match panic_info.payload().downcast_ref::<&'static str>() {
-                Some(string_message) => string_message,
-                None => match panic_info.payload().downcast_ref::<String>() {
-                    Some(string_message) => string_message.as_str(),
-                    None => "Unknown",
-                }
-            };
-            eprintln!("{}.", panic_message);
-            UserInterface::enter_key_to_close_on_windows();
-        }));
     }
 }
 

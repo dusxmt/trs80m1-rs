@@ -13,10 +13,10 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 
+use log::{info, warn, error};
 
 use crate::memory;
 use crate::memory::MemIO;
-use crate::util::MessageLogging;
 use crate::z80::instructions;
 
 // This is a software implementation of the Zilog Z80.
@@ -82,40 +82,30 @@ pub struct Z80Regs {
     pub flags_prime: Z80Flags,
 }
 pub struct CPU {
-    pub regs:             Z80Regs,
-    pub halted:           bool,
-    pub im:               InterruptMode,
-    pub iff1:             bool,
-    pub iff2:             bool,
-    pub int_enabled:      bool,
-    pub added_delay:      u32,
-    pub cycle_overshoot:  u32,
-    pub cycle_timestamp:  u32,
-    current_inst:        &'static instructions::Instruction,
-
-    logged_messages:      Vec<String>,
-    messages_present:     bool,
+    pub regs:         Z80Regs,
+    pub halted:       bool,
+    pub im:           InterruptMode,
+    pub iff1:         bool,
+    pub iff2:         bool,
+    pub int_enabled:  bool,
+    pub added_delay:  u32,
+    current_inst:     &'static instructions::Instruction,
 }
 
 impl CPU {
     pub fn new() -> CPU {
-        let mut cpu = CPU {
-                          regs:            Z80Regs::default(),
-                          halted:          true,
-                          im:              InterruptMode::Mode0,
-                          iff1:            false,
-                          iff2:            false,
-                          int_enabled:     false,
-                          added_delay:     0,
-                          cycle_overshoot: 0,
-                          cycle_timestamp: 0,
-                          current_inst:    &instructions::INSTRUCTION_SET.nop_1,
+        let cpu = CPU {
+            regs:          Z80Regs::default(),
+            halted:        true,
+            im:            InterruptMode::Mode0,
+            iff1:          false,
+            iff2:          false,
+            int_enabled:   false,
+            added_delay:   0,
+            current_inst:  &instructions::INSTRUCTION_SET.nop_1,
+        };
 
-                          logged_messages:  Vec::new(),
-                          messages_present: false,
-                      };
-
-        cpu.log_message("Created an emulated Z80 CPU.".to_owned());
+        info!("Created an emulated Z80 CPU.");
         cpu
     }
     // Put the CPU into a well-defined state:
@@ -161,8 +151,6 @@ impl CPU {
         self.iff2            = false;
         self.int_enabled     = false;
         self.added_delay     = 0;
-        self.cycle_overshoot = 0;
-        self.cycle_timestamp = 0;
         self.current_inst    = &instructions::INSTRUCTION_SET.nop_1;
     }
 
@@ -176,8 +164,6 @@ impl CPU {
         self.iff2            = false;
 
         self.added_delay     = 0;
-        self.cycle_overshoot = 0;
-        self.cycle_timestamp = 0;
         self.current_inst    = &instructions::INSTRUCTION_SET.nop_1;
     }
 
@@ -189,11 +175,11 @@ impl CPU {
     }
 
     // Perform a non-maskable interrupt:
-    fn perform_nmi(&mut self, memory: &mut memory::MemorySystem) -> i32 {
+    fn perform_nmi(&mut self, memory: &mut memory::MemorySystem) -> u32 {
         self.iff2 = self.iff1;
         self.iff1 = false;
 
-        stack_push_16bit!(self.regs, memory, self.regs.pc, self.cycle_timestamp);
+        stack_push_16bit!(self.regs, memory, self.regs.pc);
         self.regs.pc = NMI_VEC;
 
         // The NMI acts as a reset instruction, which takes 11 T cycles:
@@ -201,7 +187,7 @@ impl CPU {
     }
 
     // Perform a maskable interrupt:
-    fn perform_int(&mut self, memory: &mut memory::MemorySystem) -> i32 {
+    fn perform_int(&mut self, memory: &mut memory::MemorySystem) -> u32 {
         self.iff2 = false;
         self.iff1 = false;
 
@@ -220,7 +206,7 @@ impl CPU {
                 // load the instruction with all of itss parameters form the
                 // interrupting peripheral.
                 //
-                stack_push_16bit!(self.regs, memory, self.regs.pc, self.cycle_timestamp);
+                stack_push_16bit!(self.regs, memory, self.regs.pc);
                 self.regs.pc = memory.mode0_int_addr;
 
                 // According to the Z80 Family CPU User Manual:
@@ -236,7 +222,7 @@ impl CPU {
                 11 + 2
             },
             InterruptMode::Mode1 => {
-                stack_push_16bit!(self.regs, memory, self.regs.pc, self.cycle_timestamp);
+                stack_push_16bit!(self.regs, memory, self.regs.pc);
                 self.regs.pc = MODE1_INT_VEC;
 
                 // Mode 1 maskable interrupts act as a reset instruction, which takes 11 T cycles:
@@ -244,10 +230,10 @@ impl CPU {
             },
             InterruptMode::Mode2 => {
                 let int_vec_index = memory.mode2_int_vec & 0xFE;
-                stack_push_16bit!(self.regs, memory, self.regs.pc, self.cycle_timestamp.wrapping_add(7));
+                stack_push_16bit!(self.regs, memory, self.regs.pc);
 
                 let int_vec_addr = compose_16bit_from_8bit!(self.regs.i, int_vec_index);
-                self.regs.pc = memory.read_word(int_vec_addr, self.cycle_timestamp.wrapping_add(7 + 6));
+                self.regs.pc = memory.read_word(int_vec_addr);
 
                 // According to the Z80 Family CPU User Manual:
                 //
@@ -259,96 +245,68 @@ impl CPU {
                 7 + 6 + 6
             },
             InterruptMode::ModeUndefined => {
-                self.log_message("I haven't got a clue on how to service interrupts in the 0/1 mode...".to_owned());
+                warn!("Servicing interrupts in the 0/1 mode is not supported.");
                 4
             },
         }
     }
 
-    // Execute at least `cycles_to_exec - self.cycle_overshoot` of machine
-    // cycles. If more cycles are executed (we overshat), compensate for it
-    // on the next invocation of this method.
-    pub fn exec(&mut self, cycles_to_exec: u32, memory_system: &mut memory::MemorySystem) {
-        let cycles_to_exec_comp: i32 = (cycles_to_exec as i32) - (self.cycle_overshoot as i32);
-        let mut executed_cycles: i32 = 0;
+    // Execute a single CPU instruction, and return the number of clock cycles
+    // that it took.
+    pub fn step(&mut self, memory_system: &mut memory::MemorySystem) -> u32 {
 
-        while executed_cycles < cycles_to_exec_comp {
+        self.regs.r = (self.regs.r & 0x80) | (self.regs.r.wrapping_add(1) & 0x7F);
 
-            self.regs.r = (self.regs.r & 0x80) | (self.regs.r.wrapping_add(1) & 0x7F);
-
-            if self.int_enabled && !self.iff1 {
-                self.int_enabled = false;
-            }
-
-            if memory_system.nmi_request {
-                if self.halted {
-                    self.halted = false;
-                    self.regs.pc += 1;
-                }
-                let spent_clock_cycles = self.perform_nmi(memory_system);
-                executed_cycles += spent_clock_cycles;
-                self.cycle_timestamp = self.cycle_timestamp.wrapping_add(spent_clock_cycles as u32);
-                memory_system.nmi_request = false;
-
-            } else if memory_system.int_request && self.int_enabled {
-                if self.halted {
-                    self.halted = false;
-                    self.regs.pc += 1;
-                }
-                let spent_clock_cycles = self.perform_int(memory_system);
-                executed_cycles += spent_clock_cycles;
-                self.cycle_timestamp = self.cycle_timestamp.wrapping_add(spent_clock_cycles as u32);
-                memory_system.int_request = false;
-
-            } else if self.halted {
-                // The following check is done in order to ensure that
-                // maskable interrupts are only serviced once the instruction
-                // following the ei instruction is executed.
-                //
-                if self.iff1 && !self.int_enabled {
-                    self.int_enabled = true;
-                }
-
-                executed_cycles += 4;
-                self.cycle_timestamp = self.cycle_timestamp.wrapping_add(4);
-
-            } else {
-                // The following check is done in order to ensure that
-                // maskable interrupts are only serviced once the instruction
-                // following the ei instruction is executed.
-                //
-                if self.iff1 && !self.int_enabled {
-                    self.int_enabled = true;
-                }
-
-                self.current_inst = instructions::load_instruction(self.regs.pc, memory_system, self.cycle_timestamp);
-                self.added_delay = 0;
-
-                (self.current_inst.execute)(self, memory_system);
-                self.cycle_timestamp = self.cycle_timestamp.wrapping_add(self.current_inst.clock_cycles);
-                self.cycle_timestamp = self.cycle_timestamp.wrapping_add(self.added_delay);
-
-                executed_cycles += self.current_inst.clock_cycles as i32;
-                executed_cycles += self.added_delay as i32;
-            }
+        if self.int_enabled && !self.iff1 {
+            self.int_enabled = false;
         }
-        self.cycle_overshoot = (executed_cycles - cycles_to_exec_comp) as u32;
-        //println!("[{:10}]: {:10} CPU cycles requested, executed {:10}.", self.cycle_timestamp, cycles_to_exec, executed_cycles);
-    }
-}
 
-impl MessageLogging for CPU {
-    fn log_message(&mut self, message: String) {
-        self.logged_messages.push(message);
-        self.messages_present = true;
-    }
-    fn messages_available(&self) -> bool {
-        self.messages_present
-    }
-    fn collect_messages(&mut self) -> Vec<String> {
-        let logged_thus_far = self.logged_messages.drain(..).collect();
-        self.messages_present = false;
+        if memory_system.nmi_request {
+            if self.halted {
+                self.halted = false;
+                self.regs.pc += 1;
+            }
+            let spent_clock_cycles = self.perform_nmi(memory_system);
+            memory_system.nmi_request = false;
 
-        logged_thus_far
+            spent_clock_cycles
+
+        } else if memory_system.int_request && self.int_enabled {
+            if self.halted {
+                self.halted = false;
+                self.regs.pc += 1;
+            }
+            let spent_clock_cycles = self.perform_int(memory_system);
+            memory_system.int_request = false;
+
+            spent_clock_cycles
+
+        } else if self.halted {
+            // The following check is done in order to ensure that
+            // maskable interrupts are only serviced once the instruction
+            // following the ei instruction is executed.
+            //
+            if self.iff1 && !self.int_enabled {
+                self.int_enabled = true;
+            }
+
+            4
+
+        } else {
+            // The following check is done in order to ensure that
+            // maskable interrupts are only serviced once the instruction
+            // following the ei instruction is executed.
+            //
+            if self.iff1 && !self.int_enabled {
+                self.int_enabled = true;
+            }
+
+            self.current_inst = instructions::load_instruction(self.regs.pc, memory_system);
+            self.added_delay = 0;
+
+            (self.current_inst.execute)(self, memory_system);
+
+            self.current_inst.clock_cycles + self.added_delay
+        }
     }
 }

@@ -7,8 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+backtrace = "0.3"
 getopts = "0.2"
 home = "0.5.4"
+lazy_static = "1.4"
+log = "0.4"
 sdl2 = "0.35"
 
 [dependencies.pancurses]

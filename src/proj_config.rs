@@ -14,6 +14,7 @@
 //
 
 use home;
+use log::{info, warn, error};
 
 use std::env;
 use std::fmt;
@@ -24,8 +25,7 @@ use std::num;
 use std::io::prelude::*;
 
 use crate::cassette; // For cassette::Format.
-use crate::util;     // for util::StartupLogger.
-use crate::util::MessageLogging;
+
 
 // Names for determining where to find the configuration folder and files:
 const WINDOWS_DEV_NAME:      &'static str = "DusXMT";
@@ -131,7 +131,7 @@ pub enum ConfigInfoSource {
 impl ConfigInfoSource {
     fn from_config_file(line_number: usize, line_text: &str) -> ConfigInfoSource {
         ConfigInfoSource::ConfigFile {
-            line_number: line_number,
+            line_number,
             line_text:   line_text.to_owned(),
         }
     }
@@ -197,10 +197,10 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ConfigError::RedundantSection(ref section_name, first, second) => {
-                write!(f, "section `[{}]' is present in the config file more than once, on line {} and line {}", section_name, first + 1, second + 1)
+                write!(f, "section `[{}]' is present in the configuration file more than once, on line {} and line {}", section_name, first + 1, second + 1)
             },
             ConfigError::RedundantEntry(ref section_name, ref entry_name, first, second) => {
-                write!(f, "entry `{}' is present more than once in the `[{}]' section of the config file, on line {} and line {}", entry_name, section_name, first + 1, second + 1)
+                write!(f, "entry `{}' is present more than once in the `[{}]' section of the configuration file, on line {} and line {}", entry_name, section_name, first + 1, second + 1)
             },
             ConfigError::EntryIntParsingError(ref info_source, ref inner_error) => {
                 info_source.error_prefix(f)?;
@@ -320,7 +320,7 @@ pub enum ConfigChangeApplyAction {
     UpdateCassetteFile,
     UpdateCassetteFileFormat,
     UpdateCassetteFileOffset,
-    Nothing,
+    UpdateDefaultRomSelection,
     AlreadyUpToDate,
 }
 
@@ -359,75 +359,64 @@ pub struct ConfigSystem {
     conf_file_lines:      Vec<String>,
 
     config_sections:      Box<[ConfigSection]>,
-
-    logged_messages:      Vec<String>,
-    messages_present:     bool,
 }
 
 impl ConfigSystem {
-    pub fn new<P: AsRef<path::Path>>(config_dir_in: P, startup_logger: &mut util::StartupLogger) -> Option<ConfigSystem> {
+    pub fn new<P: AsRef<path::Path>>(config_dir_in: P) -> Option<ConfigSystem> {
         let config_dir = config_dir_in.as_ref() as &path::Path;
 
-        if check_config_dir(config_dir, startup_logger) {
+        if check_config_dir(config_dir) {
             let mut config_file_path = config_dir.to_owned();
             config_file_path.push(CONFIG_FILE_NAME);
             let config_file_path = config_file_path;
 
-            startup_logger.log_incomplete_message(format!("Loading `{}'... ", config_file_path.display()));
-            let conf_file_lines = match load_config_file(&config_file_path, startup_logger) {
+            let conf_file_lines = match load_config_file(&config_file_path) {
                 Ok(lines) => {
-                    startup_logger.log_message("ok.".to_owned());
-
                     lines
                 },
                 Err(error) => {
-                    startup_logger.log_message(format!("failed to load the config file: {}.", error));
+                    error!("Failed to load the configuration file `{}': {}.", config_file_path.display(), error);
 
                     return None;
                 },
             };
             let mut new_system = ConfigSystem {
                 config_dir_path:  config_dir.to_owned(),
-                config_file_path: config_file_path,
+                config_file_path,
 
                 config_items:     ConfigItems::new_uninitialized(),
-                conf_file_lines:  conf_file_lines,
+                conf_file_lines,
 
                 config_sections:  new_config_sections(),
-
-                logged_messages:  Vec::new(),
-                messages_present: false,
             };
 
-            startup_logger.log_incomplete_message("Parsing configuration... ".to_owned());
             match new_system.sanity_check() {
                 Ok(()) => {
                     match new_system.reload_all_sections() {
                         Ok(()) => {
-                            startup_logger.log_message("ok.".to_owned());
+                            info!("Configuration file parsed successfully.");
 
-                            startup_logger.log_incomplete_message("Updating the configuration file... ".to_owned());
                             match new_system.write_config_file() {
                                 Ok(()) => {
-                                    startup_logger.log_message("ok.".to_owned());
+                                    info!("Configuration file updated successfully.");
                                 },
                                 Err(error) => {
-                                    startup_logger.log_message(format!("failed, {}.", error));
+                                    error!("Failed to update the configuration file: {}.", error);
                                 },
                             }
 
-                            let _ = new_system.check_obsolete_entries(&new_system.config_file_path, startup_logger);
+                            let _ = new_system.check_obsolete_entries(&new_system.config_file_path);
                             Some(new_system)
                         },
                         Err(error) => {
-                            startup_logger.log_message(format!("failed, {}.", error));
+                            error!("Failed to parse the configuration file: {}.", error);
 
                             None
                         },
                     }
                 },
                 Err(error) => {
-                    startup_logger.log_message(format!("failed, {}.", error));
+                    error!("Failed to parse the configuration file: {}.", error);
 
                     None
                 },
@@ -528,7 +517,7 @@ impl ConfigSystem {
                     end_index   = found_end_index;
                 },
                 None => {
-                    // The section isn't in the config file, add it:
+                    // The section isn't in the configuration file, add it:
                     if self.conf_file_lines.len() != 0 {
                         self.conf_file_lines.push("".to_owned());
                     }
@@ -641,7 +630,7 @@ impl ConfigSystem {
             Ok(None)
         }
     }
-    fn check_obsolete_entries(&self, config_file_path: &path::Path, startup_logger: &mut util::StartupLogger) -> Result<(), ConfigError> {
+    fn check_obsolete_entries(&self, config_file_path: &path::Path) -> Result<(), ConfigError> {
 
         for section_iter in 0..self.config_sections.len() {
 
@@ -651,7 +640,7 @@ impl ConfigSystem {
 
                         match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].obsolete_entries[entry_iter], start_index, end_index)? {
                             Some(loc) => {
-                                startup_logger.log_message(format!("Note: The entry `{}' of the `[{}]' section at line {} of `{}' is from an older version of the emulator and is no longer used, it can be safely removed from the configuration file.", self.config_sections[section_iter].obsolete_entries[entry_iter], self.config_sections[section_iter].section_name, loc + 1, config_file_path.display()));
+                                warn!("The entry `{}' of the `[{}]' section at line {} of `{}' is from an older version of the emulator and is no longer used, it can be safely removed from the configuration file.", self.config_sections[section_iter].obsolete_entries[entry_iter], self.config_sections[section_iter].section_name, loc + 1, config_file_path.display());
                             },
                             None => { },
                         }
@@ -718,7 +707,7 @@ impl ConfigSystem {
                 let (start_index, end_index) = match self.find_section(&self.config_sections[section_iter].section_name)? {
                     Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
                     None => {
-                        panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
+                        panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the configuration file text buffer, this is a bug", self.config_sections[section_iter].section_name);
                     }
                 };
                 for entry_iter in 0..self.config_sections[section_iter].entries.len() {
@@ -728,7 +717,7 @@ impl ConfigSystem {
                         let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                             Some(loc) => { loc },
                             None => {
-                                panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
+                                panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the configuration file text buffer, this is a bug", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
                             },
                         };
                         let assignee = retrieve_entry_assignee(&self.conf_file_lines[entry_loc]);
@@ -748,7 +737,7 @@ impl ConfigSystem {
             let (start_index, end_index) = match self.find_section(&self.config_sections[section_iter].section_name)? {
                 Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
                 None => {
-                    panic!("ConfigSystem::get_config_entry_current_state_all(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
+                    panic!("ConfigSystem::get_config_entry_current_state_all(): Section {} is missing in the configuration file text buffer, this is a bug", self.config_sections[section_iter].section_name);
                 }
             };
             for entry_iter in 0..self.config_sections[section_iter].entries.len() {
@@ -757,7 +746,7 @@ impl ConfigSystem {
                 let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                     Some(loc) => { loc },
                     None => {
-                        panic!("ConfigSystem::get_config_entry_current_state_all(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
+                        panic!("ConfigSystem::get_config_entry_current_state_all(): Entry {} of Section {} is missing in the configuration file text buffer, this is a bug", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
                     },
                 };
                 let assignee = retrieve_entry_assignee(&self.conf_file_lines[entry_loc]);
@@ -778,7 +767,7 @@ impl ConfigSystem {
                 let (start_index, end_index) = match self.find_section(&self.config_sections[section_iter].section_name)? {
                     Some((found_start_index, found_end_index)) => { (found_start_index, found_end_index) },
                     None => {
-                        panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].section_name);
+                        panic!("ConfigSystem::get_config_entry_current_state(): Section {} is missing in the configuration file text buffer, this is a bug", self.config_sections[section_iter].section_name);
                     }
                 };
                 for entry_iter in 0..self.config_sections[section_iter].entries.len() {
@@ -788,7 +777,7 @@ impl ConfigSystem {
                         let entry_loc = match self.find_entry(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, start_index, end_index)? {
                             Some(loc) => { loc },
                             None => {
-                                panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the config file text buffer, this is a bug.", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
+                                panic!("ConfigSystem::get_config_entry_current_state(): Entry {} of Section {} is missing in the configuration file text buffer, this is a bug", self.config_sections[section_iter].entries[entry_iter].entry_name, self.config_sections[section_iter].section_name);
                             },
                         };
                         (self.config_sections[section_iter].entries[entry_iter].parse_entry)(ConfigInfoSource::from_external_source(&self.config_sections[section_iter].section_name, &self.config_sections[section_iter].entries[entry_iter].entry_name, invocation_text), &mut self.config_items)?;
@@ -810,23 +799,7 @@ impl ConfigSystem {
     }
 }
 
-impl MessageLogging for ConfigSystem {
-    fn log_message(&mut self, message: String) {
-        self.logged_messages.push(message);
-        self.messages_present = true;
-    }
-    fn messages_available(&self) -> bool {
-        self.messages_present
-    }
-    fn collect_messages(&mut self) -> Vec<String> {
-        let logged_thus_far = self.logged_messages.drain(..).collect();
-        self.messages_present = false;
-
-        logged_thus_far
-    }
-}
-
-// Find the %AppData% folder on Windows:
+// Find the %AppData% directory on Windows:
 fn find_appdata() -> Option<path::PathBuf> {
     let mut search_result = None;
 
@@ -871,38 +844,36 @@ pub fn get_default_config_dir_path() -> path::PathBuf {
 }
 
 // Check whether the configuration directory exists, and if not, create it:
-fn check_config_dir<P: AsRef<path::Path>>(config_dir_in: P, startup_logger: &mut util::StartupLogger) -> bool {
+fn check_config_dir<P: AsRef<path::Path>>(config_dir_in: P) -> bool {
 
     let config_dir = config_dir_in.as_ref() as &path::Path;
-    startup_logger.log_incomplete_message(format!("Checking `{}'... ", config_dir.display()));
 
     if !config_dir.exists() {
-        startup_logger.log_incomplete_message("doesn't exist, creating... ".to_owned());
         match fs::create_dir_all(&config_dir) {
             Ok(()) => {
-                startup_logger.log_message("ok.".to_owned());
+                info!("Created configuration directory `{}'.", config_dir.display());
 
                 true
             },
             Err(error) => {
-                startup_logger.log_message(format!("failed: {}.", error));
+                error!("Failed to create configuration directory `{}': {}.", config_dir.display(), error);
 
                 false
             },
         }
     } else if config_dir.exists() && !config_dir.is_dir() {
-        startup_logger.log_message("already exists, but is not a directory. Please remove it and try again.".to_owned());
+        error!("Failed to create configuration directory `{}': {}.", config_dir.display(), "A non-directory filesystem entry of the same name already exists, please rename/remove it and try again");
         false
     } else if config_dir.exists() && config_dir.is_dir() {
-        startup_logger.log_message("ok.".to_owned());
+        info!("Found existing configuration directory `{}'.", config_dir.display());
         true
     } else {
         false
     }
 }
 
-// Load the config file into a vector of strings representing lines:
-fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger: &mut util::StartupLogger)
+// Load the configuration file into a vector of strings representing lines:
+fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P)
                    -> Result<Vec<String>, ConfigError> {
 
     let config_file_path = config_file_path_in.as_ref() as &path::Path;
@@ -934,16 +905,16 @@ fn load_config_file<P: AsRef<path::Path>>(config_file_path_in: P, startup_logger
             line_collection.push(current_line.trim().to_owned());
         }
 
+        info!("Successfully loaded the configuration file `{}'.", config_file_path.display());
         Ok(line_collection)
     } else {
         // Nothing to load:
-        startup_logger.log_incomplete_message("doesn't exist, creating... ".to_owned());
         fs::File::create(config_file_path)?;
+        info!("Created new configuration file `{}'.", config_file_path.display());
         Ok(Vec::new())
     }
 }
 
-
 // Configuration sections:
 fn new_config_sections() -> Box<[ConfigSection]> {
     let mut sections: Vec<ConfigSection> = Vec::new();
@@ -1338,7 +1309,7 @@ fn new_handler_general_level_1_rom() -> ConfigEntry {
     default_text.push("; You only need to provide one of these rom files.  The three fields exist".to_owned());
     default_text.push("; solely for the sake of convenience, when you want to have different roms".to_owned());
     default_text.push("; and to be able to switch between them without having to keep changing".to_owned());
-    default_text.push("; the names here in the config file.".to_owned());
+    default_text.push("; the names here in the configuration file.".to_owned());
     default_text.push(";".to_owned());
     default_text.push("; If you specify a name, the program will look for the rom file in the".to_owned());
     default_text.push("; configuration directory, which is where this file resides.  If you want".to_owned());
@@ -1395,7 +1366,7 @@ fn new_handler_general_default_rom() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "default_rom".to_owned(),
         default_text: default_text.into_boxed_slice(),
-        apply_action: ConfigChangeApplyAction::Nothing,
+        apply_action: ConfigChangeApplyAction::UpdateDefaultRomSelection,
         update_line:  update_line_general_default_rom,
         parse_entry:  parse_entry_general_default_rom,
     }
@@ -1872,7 +1843,7 @@ fn new_handler_video_desktop_fullscreen_mode() -> ConfigEntry {
     ConfigEntry {
         entry_name:   "desktop_fullscreen_mode".to_owned(),
         default_text: default_text.into_boxed_slice(),
-        apply_action: ConfigChangeApplyAction::Nothing,
+        apply_action: ConfigChangeApplyAction::ChangeFullscreenResolution,
         update_line:  update_line_video_desktop_fullscreen_mode,
         parse_entry:  parse_entry_video_desktop_fullscreen_mode,
     }
@@ -1908,9 +1879,6 @@ fn new_handler_video_use_vsync() -> ConfigEntry {
     default_text.push(";".to_owned());
     default_text.push("; Vith vsync enabled, the screen contents are updated in sync with the screen's".to_owned());
     default_text.push("; refresh rate.".to_owned());
-    default_text.push(";".to_owned());
-    default_text.push("; This option only works if video acceleration is enabled, and the refresh".to_owned());
-    default_text.push("; rate is known.".to_owned());
     default_text.push(";".to_owned());
     default_text.push("use_vsync = false".to_owned());
     default_text.push("".to_owned());
