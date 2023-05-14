@@ -1507,7 +1507,7 @@ impl UserInterface {
 
             if self.screen_too_small {
                 self.window.mv(0, 0);
-                self.window.printw(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH));
+                self.window.addstr(format!("Screen too small, minimum size is {} rows, {} cols.", MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH));
             } else {
                 self.render_lines();
                 self.render_status_strips();
@@ -1614,7 +1614,7 @@ impl UserInterface {
                     self.window.mv(LINES_TOP_OFFSET as i32, 0);
                     let (_, to_print) = cur_line_text.split_at((phys_lines_to_skip * self.screen_width) - 1);
                     self.window.attron(pancurses::colorpair::ColorPair(color_pair));
-                    self.window.printw(to_print);
+                    self.window.addstr(to_print);
                     self.window.attroff(pancurses::colorpair::ColorPair(color_pair));
 
                     break;
@@ -1623,7 +1623,7 @@ impl UserInterface {
 
                     self.window.mv(y_pos, 0);
                     self.window.attron(pancurses::colorpair::ColorPair(color_pair));
-                    self.window.printw(cur_line_text);
+                    self.window.addstr(cur_line_text);
                     self.window.attroff(pancurses::colorpair::ColorPair(color_pair));
 
                     y_pos -= 1;
@@ -1646,67 +1646,67 @@ impl UserInterface {
 
         // Write in some text:
         self.window.mv(TOP_STRIP_TOP_OFFSET as i32, 1);
-        self.window.printw(format!("{} v{} - z80 emulator", PROGRAM_NAME, PROGRAM_VERSION).as_str());
+        self.window.addstr(format!("{} v{} - z80 emulator", PROGRAM_NAME, PROGRAM_VERSION).as_str());
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
 
         self.window.mv((self.screen_height - BOTTOM_STRIP_BOTTOM_OFFSET) as i32 - 1, 1);
 
         self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
-        self.window.printw("[");
+        self.window.addch('[');
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
         self.window.attron(pancurses::A_BOLD);
         if self.machine_powered_on {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
-            self.window.printw("power on");
+            self.window.addstr("power on");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
         } else {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_RED));
-            self.window.printw("power off");
+            self.window.addstr("power off");
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_RED));
         }
         self.window.attroff(pancurses::A_BOLD);
 
         self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
-        self.window.printw("]");
+        self.window.addch(']');
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
         if self.machine_powered_on || self.machine_paused {
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
-            self.window.printw(" ");
+            self.window.addch(' ');
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
 
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
-            self.window.printw("[");
+            self.window.addch('[');
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
 
             if self.machine_paused {
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
-                self.window.printw("paused");
+                self.window.addstr("paused");
                 self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
             } else if self.cpu_halted {
                 self.window.attron(pancurses::A_BOLD);
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
-                self.window.printw("halted");
+                self.window.addstr("halted");
                 self.window.attroff(pancurses::A_BOLD);
                 self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
             } else {
                 self.window.attron(pancurses::A_BOLD);
                 self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
-                self.window.printw("running");
+                self.window.addstr("running");
                 self.window.attroff(pancurses::A_BOLD);
                 self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GREEN));
             }
 
             self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
-            self.window.printw("]");
+            self.window.addch(']');
             self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_CYAN));
         }
 
         self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
         if self.lines_added_scrolled_up {
             self.window.mv((self.screen_height - BOTTOM_STRIP_BOTTOM_OFFSET) as i32 - 1, (self.screen_width as i32) - 1 - 10);
-            self.window.printw("-- more --");
+            self.window.addstr("-- more --");
         }
         self.window.attroff(pancurses::colorpair::ColorPair(COLOR_PAIR_STRIP_GRAY));
     }
@@ -1714,7 +1714,7 @@ impl UserInterface {
         self.window.attron(pancurses::colorpair::ColorPair(COLOR_PAIR_PROMPT));
 
         self.window.mv((self.screen_height - PROMPT_BOTTOM_OFFSET) as i32 - 1, 0);
-        self.window.printw("> ");
+        self.window.addstr("> ");
 
         self.window.mv((self.screen_height - PROMPT_BOTTOM_OFFSET) as i32 - 1, PROMPT_TEXT_OFFSET as i32);
         let current_prompt_text = match self.prompt_history_pos {
@@ -1728,7 +1728,7 @@ impl UserInterface {
                            let (to_print, _) = upper_half.split_at(self.screen_width - PROMPT_TEXT_OFFSET);
                            to_print
                        };
-        self.window.printw(to_print);
+        self.window.addstr(to_print);
 
         self.window.mv((self.screen_height - PROMPT_BOTTOM_OFFSET) as i32 - 1, (self.prompt_curs_pos + PROMPT_TEXT_OFFSET - self.prompt_scroll) as i32);
 
