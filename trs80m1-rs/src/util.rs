@@ -1,4 +1,4 @@
-// Copyright (c) 2017, 2018 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2017, 2018, 2023 Marek Benc <dusxmt@gmx.com>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -346,8 +346,4 @@ pub fn parse_u32_from_str(input_in: &str) -> Option<u32> {
     }
 
     Some(accumulator)
-}
-
-pub trait Sink<T> {
-    fn push(&mut self, value: T);
 }

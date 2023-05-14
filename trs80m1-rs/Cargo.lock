@@ -199,6 +199,14 @@ dependencies = [
  "log",
  "pancurses",
  "sdl2",
+ "trs80m1-rs-core",
+]
+
+[[package]]
+name = "trs80m1-rs-core"
+version = "0.2.0"
+dependencies = [
+ "log",
 ]
 
 [[package]]

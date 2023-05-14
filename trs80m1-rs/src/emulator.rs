@@ -21,14 +21,14 @@ use std::sync::mpsc;
 use std::thread;
 use std::time;
 
-use crate::cassette;
-use crate::keyboard;
+use trs80m1_rs_core::cassette;
+use trs80m1_rs_core::keyboard;
 use crate::sdl_keyboard;
-use crate::video;
-use crate::machine;
+use trs80m1_rs_core::video;
+use trs80m1_rs_core::machine;
 use crate::proj_config;
-use crate::util::Sink;
-use crate::memory::MemoryChipOps;
+use trs80m1_rs_core::util::Sink;
+use trs80m1_rs_core::memory::MemoryChipOps;
 use crate::sdl_video;
 
 pub enum EmulatorCassetteCommand {
@@ -704,7 +704,7 @@ impl EmulatorLogicCore {
         let mut frame_cycles:    u32;
         let mut emulated_cycles: u32;
 
-        let mut cassette_event_sink = Vec::new();
+        let mut cassette_event_sink = LocalVec::new(); // Workaround for E0117...
         let video_cmd_tx = self.video_cmd_tx.clone();
         let mut video_frame_sink:    MpscSenderSink<VideoCommand> = MpscSenderSink::new(&video_cmd_tx);
 
@@ -732,7 +732,7 @@ impl EmulatorLogicCore {
             for kb_event in kb_rcv.try_iter() {
                 self.machine.devices.keyboard.add_keyboard_event(kb_event);
             }
-            for cas_event in cassette_event_sink.drain(..) {
+            for cas_event in cassette_event_sink.vec.drain(..) {
                 self.handle_cas_event(cas_event);
             }
             if self.powered_on && !self.paused {
@@ -1240,9 +1240,22 @@ impl EmulatorSdlFrontend {
     }
 }
 
-impl<T> Sink<T> for Vec<T> {
+// Workaround for E0117:
+struct LocalVec<T> {
+    vec: Vec<T>,
+}
+
+impl<T> LocalVec<T> {
+    fn new() -> LocalVec<T> {
+        LocalVec {
+            vec: Vec::new(),
+        }
+    }
+}
+
+impl<T> Sink<T> for LocalVec<T> {
     fn push(&mut self, value: T) {
-        self.push(value);
+        self.vec.push(value);
     }
 }
 

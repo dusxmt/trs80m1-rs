@@ -24,7 +24,7 @@ use std::io;
 use std::num;
 use std::io::prelude::*;
 
-use crate::cassette; // For cassette::Format.
+use trs80m1_rs_core::cassette; // For cassette::Format.
 
 
 // Names for determining where to find the configuration folder and files:

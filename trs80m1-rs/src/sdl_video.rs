@@ -15,8 +15,8 @@
 
 use sdl2;
 
-use crate::fonts;
-use crate::video::*;
+use trs80m1_rs_core::fonts;
+use trs80m1_rs_core::video::*;
 
 
 fn rgb888_into_rgb332(red: u8, green: u8, blue: u8) -> u8 {

@@ -4,6 +4,10 @@ in Rust.
 The program emulates a base unit with RAM expandable up to 48K, and a cassette
 tape interface.
 
+The project is split up into two crates, trs80m1-rs-core, which contains
+the actual machine emulation code, and trs80m1-rs, which is a front-end
+with a curses-based text UI, and an SDL2-based video screen.
+
 
 This emulator was mostly made as an exercise to help me with writing Rust code.
 The project originally started as an emulator of the Z80 processor, which I

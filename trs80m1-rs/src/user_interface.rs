@@ -26,7 +26,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::emulator::{EmulatorCommand, EmulatorCassetteCommand, EmulatorConfigCommand, EmulatorStatus};
-use crate::cassette;
+use trs80m1_rs_core::cassette;
 use crate::util;
 
 // Program name and version:

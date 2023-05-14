@@ -1,2 +1,3 @@
 target
 *.lst
+trs80m1-rs-core/Cargo.lock

@@ -20,20 +20,14 @@ extern crate pancurses;
 extern crate lazy_static;
 extern crate log;
 extern crate sdl2;
+extern crate trs80m1_rs_core;
 
-mod cassette;
 mod emulator;
-mod fonts;
-mod keyboard;
-mod machine;
-mod memory;
 mod proj_config;
 mod user_interface;
-mod util;
-mod video;
 mod sdl_keyboard;
 mod sdl_video;
-mod z80;
+mod util;
 
 use backtrace::Backtrace;
 use log::{info, warn, error};

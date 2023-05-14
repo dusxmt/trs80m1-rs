@@ -13,6 +13,7 @@ home = "0.5.4"
 lazy_static = "1.4"
 log = "0.4"
 sdl2 = "0.35"
+trs80m1-rs-core = { path = "../trs80m1-rs-core" }
 
 [dependencies.pancurses]
 version = "0.17"

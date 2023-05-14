@@ -19,8 +19,7 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 
 use crate::emulator;
-use crate::keyboard;
-use crate::sdl2;
+use trs80m1_rs_core::keyboard;
 
 
 struct KeyDesc {
