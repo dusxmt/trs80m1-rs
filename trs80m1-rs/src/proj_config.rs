@@ -18,7 +18,7 @@ use log::{info, warn, error};
 
 use std::env;
 use std::fmt;
-use std::path; 
+use std::path;
 use std::fs;
 use std::io;
 use std::num;
@@ -809,7 +809,7 @@ fn find_appdata() -> Option<path::PathBuf> {
                 if varname_str.to_uppercase() == "APPDATA" {
                     search_result = Some(value_osstr);
                     break;
-                } 
+                }
             },
             Err(..) => { },
         }

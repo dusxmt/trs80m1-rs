@@ -9052,7 +9052,7 @@ fn inst_daa(cpu: &mut cpu::CPU, _memory: &mut memory::MemorySystem) {
 
     let high_digit = (old_val & 0xF0) >> 4;
     let low_digit  =  old_val & 0x0F;
-   
+
     match cpu.regs.flags.add_sub {
         // Addition:
         false => {

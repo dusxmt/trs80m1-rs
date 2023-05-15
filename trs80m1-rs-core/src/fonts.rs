@@ -23,7 +23,7 @@ pub const GRAPH_FONT_SIZE:   usize = (GRAPH_GLYPH_COUNT * GRAPH_GLYPH_BYTES) as 
 // It has odd symbols in positions 0-31, and the lowercase letters with
 // descenders (plus 'a') are raised.  Level II Basic put the odd symbols on
 // the screen instead of uppercase if you did a homebrew lowercase conversion
-// and did not replace the CG.  
+// and did not replace the CG.
 
 pub static FONT_CG0: [u8; FONT_SIZE] =
   [ 0x00, 0x1f, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1f, 0x00, 0x00, 0x00, 0x00,
@@ -166,7 +166,7 @@ pub static FONT_CG0: [u8; FONT_SIZE] =
 // It also has odd symbols in positions 0-31, and lowercase letters with
 // descenders (plus 'a') are raised.  Level II Basic put the odd symbols on
 // the screen instead of uppercase if you did a homebrew lowercase conversion
-// and did not replace the CG.  
+// and did not replace the CG.
 
 pub static FONT_CG1: [u8; FONT_SIZE] =
   [ 0x00, 0x1f, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1f, 0x00, 0x00, 0x00, 0x00,
@@ -307,7 +307,7 @@ pub static FONT_CG1: [u8; FONT_SIZE] =
 // uppercase letters, to work around a bug in the Level II ROM.
 
 // All characters without descenders are moved up one row.
-  
+
 pub static FONT_CG2: [u8; FONT_SIZE] =
   [ 0x0e, 0x11, 0x10, 0x16, 0x15, 0x15, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x04, 0x0a, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00,

@@ -397,7 +397,7 @@ impl EmulatorLogicCore {
                     },
                     EmulatorCassetteCommand::Eject => {
                         match self.config_system.config_items.cassette_file {
-         
+
                             Some(..) => {
                                 match self.config_system.change_config_entry("cassette_file", "= none") {
                                     Err(error) => {
@@ -407,7 +407,7 @@ impl EmulatorLogicCore {
                                         let cassette_file_path = EmulatorLogicCore::get_cassette_path(&self.config_system);
                                         if self.machine.devices.cassette.set_cassette_file(cassette_file_path) {
                                             info!("Cassette ejected.");
-         
+
                                             match self.config_system.change_config_entry("cassette_file_offset", "= 0") {
                                                 Ok(_) => {
                                                     self.machine.devices.cassette.set_cassette_file_offset(self.config_system.config_items.cassette_file_offset);

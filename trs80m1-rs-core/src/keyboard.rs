@@ -113,10 +113,10 @@ impl KeyboardQueue {
                     match entry.action {
                         KeyboardQueueEntryAction::Press => {
                             kbd_mem.key_matrix[entry.row as usize] |= entry.column;
-                        }, 
+                        },
                         KeyboardQueueEntryAction::Release => {
                             kbd_mem.key_matrix[entry.row as usize] &= !entry.column;
-                        }, 
+                        },
                     }
                     self.cpu_delta = 0;
                     entry_used = true;
