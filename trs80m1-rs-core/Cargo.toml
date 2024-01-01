@@ -1,7 +1,7 @@
 [package]
 name = "trs80m1-rs-core"
 version = "0.2.0"
-authors = ["Marek Benc <dusxmt@gmx.com>"]
+authors = ["Marek Benc <benc.marek.elektro98@proton.me>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

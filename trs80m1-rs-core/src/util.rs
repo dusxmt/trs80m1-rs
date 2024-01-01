@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Marek Benc <dusxmt@gmx.com>
+// Copyright (c) 2023 Marek Benc <benc.marek.elektro98@proton.me>
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
